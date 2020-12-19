@@ -2,10 +2,6 @@
 
 package docker
 
-import (
-	"fmt"
-)
-
 // ConnectionConfig configures how to connect to dockerd.
 type ConnectionConfig struct {
 	// Host is the docker connect URL
@@ -16,11 +12,4 @@ type ConnectionConfig struct {
 	Cert string `json:"cert" yaml:"cert"`
 	// Key is the client key in PEM format embedded in the configuration.
 	Key string `json:"key" yaml:"key"`
-}
-
-func (c ConnectionConfig) Validate() error {
-	if c.Host == "" {
-		return fmt.Errorf("missing host")
-	}
-	return nil
 }
