@@ -20,7 +20,7 @@ import (
 type dockerV20ClientFactory struct {
 }
 
-func (f *dockerV20ClientFactory) getDockerClient(_ context.Context, config Config) (*client.Client, error) {
+func (f *dockerV20ClientFactory) getDockerClient(ctx context.Context, config Config) (*client.Client, error) {
 	httpClient, err := getHTTPClient(config)
 	if err != nil {
 		return nil, err
@@ -29,7 +29,11 @@ func (f *dockerV20ClientFactory) getDockerClient(_ context.Context, config Confi
 		client.WithHost(config.Connection.Host),
 		client.WithHTTPClient(httpClient),
 	)
-	return cli, err
+	if err != nil {
+		return nil, err
+	}
+	cli.NegotiateAPIVersion(ctx)
+	return cli, nil
 }
 
 func (f *dockerV20ClientFactory) get(ctx context.Context, config Config, logger log.Logger) (dockerClient, error) {
