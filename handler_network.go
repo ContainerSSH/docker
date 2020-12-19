@@ -80,14 +80,18 @@ func (n *networkHandler) pullNeeded(ctx context.Context) (bool, error) {
 		return false, nil
 	case ImagePullPolicyAlways:
 		return true, nil
-	default:
-		image := n.dockerClient.getImageName()
-		if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
-			return true, nil
-		}
 	}
 
-	return n.dockerClient.hasImage(ctx)
+	image := n.dockerClient.getImageName()
+	if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
+		return true, nil
+	}
+
+	hasImage, err := n.dockerClient.hasImage(ctx)
+	if err != nil {
+		return true, err
+	}
+	return !hasImage, nil
 }
 
 func (n *networkHandler) pullImage(ctx context.Context) (err error) {
