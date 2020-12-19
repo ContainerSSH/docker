@@ -64,3 +64,9 @@ err = session.OnShell(
 )
 ```
 
+## Operating modes
+
+This library supports several operating modes:
+
+- `connection` creates a container per connection and uses the `docker exec` mechanism to launch SSH programs inside the container. This mode ignores the `CMD` of the container image and uses the `idleProgram` setting to launch inside the container.
+- `session` creates a container per session and potentially results in multiple containers for a single SSH connection. This mode uses the `CMD` of the container image or from the configuration.
