@@ -58,13 +58,6 @@ func (c *channelHandler) OnPtyRequest(
 	return nil
 }
 
-func (c *channelHandler) createEnv() (result []string) {
-	for k, v := range c.env {
-		result = append(result, fmt.Sprintf("%s=%s", k, v))
-	}
-	return result
-}
-
 func (c *channelHandler) parseProgram(program string) []string {
 	programParts, err := unixutils.ParseCMD(program)
 	if err != nil {

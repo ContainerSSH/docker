@@ -147,29 +147,9 @@ func (d *dockerV20Client) createContainer(
 		"Creating container...",
 	)
 	containerConfig := d.config.Execution.Launch.ContainerConfig
-	newConfig := &container.Config{}
-	if containerConfig != nil {
-		if err := structutils.Copy(newConfig, containerConfig); err != nil {
-			return nil, err
-		}
-	}
-	if newConfig.Labels == nil {
-		newConfig.Labels = map[string]string{}
-	}
-	newConfig.Cmd = d.config.Execution.IdleCommand
-	for k, v := range labels {
-		newConfig.Labels[k] = v
-	}
-
-	newConfig.Env = append(newConfig.Env, createEnv(env)...)
-	if tty != nil {
-		newConfig.Tty = *tty
-		newConfig.AttachStdin = true
-		newConfig.AttachStdout = true
-		newConfig.AttachStderr = true
-		newConfig.OpenStdin = true
-		newConfig.StdinOnce = true
-		newConfig.Cmd = cmd
+	newConfig, err := d.createConfig(containerConfig, labels, env, tty, cmd)
+	if err != nil {
+		return nil, err
 	}
 
 	var lastError error
@@ -203,9 +183,43 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to create container, giving up (%w)", lastError)
+	err = fmt.Errorf("failed to create container, giving up (%w)", lastError)
 	d.logger.Errore(err)
 	return nil, err
+}
+
+func (d *dockerV20Client) createConfig(
+	containerConfig *container.Config,
+	labels map[string]string,
+	env map[string]string,
+	tty *bool,
+	cmd []string,
+) (*container.Config, error) {
+	newConfig := &container.Config{}
+	if containerConfig != nil {
+		if err := structutils.Copy(newConfig, containerConfig); err != nil {
+			return nil, err
+		}
+	}
+	if newConfig.Labels == nil {
+		newConfig.Labels = map[string]string{}
+	}
+	newConfig.Cmd = d.config.Execution.IdleCommand
+	for k, v := range labels {
+		newConfig.Labels[k] = v
+	}
+
+	newConfig.Env = append(newConfig.Env, createEnv(env)...)
+	if tty != nil {
+		newConfig.Tty = *tty
+		newConfig.AttachStdin = true
+		newConfig.AttachStdout = true
+		newConfig.AttachStderr = true
+		newConfig.OpenStdin = true
+		newConfig.StdinOnce = true
+		newConfig.Cmd = cmd
+	}
+	return newConfig, nil
 }
 
 type dockerV20Container struct {
@@ -545,9 +559,9 @@ loop:
 
 			inspectResult, lastError = d.dockerClient.ContainerInspect(ctx, d.container.containerID)
 			if lastError == nil {
-				if inspectResult.State.Running == true {
+				if inspectResult.State.Running {
 					lastError = fmt.Errorf("container still running")
-				} else if inspectResult.State.Restarting == true {
+				} else if inspectResult.State.Restarting {
 					lastError = fmt.Errorf("container restarting")
 				} else if inspectResult.State.ExitCode < 0 {
 					lastError = fmt.Errorf("negative exit code: %d", inspectResult.State.ExitCode)
