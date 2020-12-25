@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/containerssh/log"
 	"github.com/containerssh/sshserver"
@@ -33,7 +34,7 @@ func TestConnectAndDisconnectShouldCreateAndRemoveContainer(t *testing.T) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
 
-	config.Execution.Launch.ContainerConfig.Image = "ubuntu:18.04"
+	config.Execution.Launch.ContainerConfig.Image = "containerssh/containerssh-guest-image"
 
 	dr, err := docker.New(
 		net.TCPAddr{
@@ -143,7 +144,7 @@ func TestSingleSessionShouldRunProgramDockerRunConfig(t *testing.T) {
 			Port: 2222,
 			Zone: "",
 		},
-		"0123456789AAAAAB",
+		"0123456789AAAAAC",
 		config,
 		createLogger(t),
 	)
@@ -182,19 +183,58 @@ func TestSingleSessionShouldRunProgramDockerRunConfig(t *testing.T) {
 	assert.Equal(t, 0, status)
 }
 
-func readUntil(reader io.Reader, buffer []byte) error {
-	byteBuffer := bytes.NewBuffer([]byte{})
-	for {
-		buf := make([]byte, 1024)
-		n, err := reader.Read(buf)
-		if err != nil {
-			return err
-		}
-		byteBuffer.Write(buf[:n])
-		if bytes.Equal(byteBuffer.Bytes(), buffer) {
-			return nil
-		}
-	}
+func TestSettingEnvShouldWork(t *testing.T) {
+	t.Parallel()
+
+	config := docker.Config{}
+	structutils.Defaults(&config)
+
+	dr, err := docker.New(
+		net.TCPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: 2222,
+			Zone: "",
+		},
+		"0123456789AAAAAD",
+		config,
+		createLogger(t),
+	)
+	must(t, assert.Nil(t, err))
+	ssh, err := dr.OnHandshakeSuccess("test")
+	must(t, assert.Nil(t, err))
+	defer dr.OnDisconnect()
+
+	session, err := ssh.OnSessionChannel(0, []byte{})
+	must(t, assert.Nil(t, err))
+
+	stdin := bytes.NewReader([]byte{})
+	stdoutReader, stdout := io.Pipe()
+	var stderrBytes bytes.Buffer
+	stderr := bufio.NewWriter(&stderrBytes)
+	done := make(chan struct{})
+	status := 0
+
+	assert.NoError(t, session.OnEnvRequest(0, "FOO", "bar"))
+
+	go func() {
+		assert.NoError(t, readUntil(stdoutReader, []byte("bar\n")))
+	}()
+
+	err = session.OnExecRequest(
+		1,
+		"echo \"$FOO\"",
+		stdin,
+		stdout,
+		stderr,
+		func(exitStatus sshserver.ExitStatus) {
+			status = int(exitStatus)
+			done <- struct{}{}
+		},
+	)
+	must(t, assert.Nil(t, err))
+	<-done
+	assert.Equal(t, "", stderrBytes.String())
+	assert.Equal(t, 0, status)
 }
 
 func TestSingleSessionShouldRunShell(t *testing.T) {
@@ -247,9 +287,85 @@ func TestSingleSessionShouldRunShell(t *testing.T) {
 	assert.Equal(t, 0, status)
 }
 
+func TestSendingSignalShouldWork(t *testing.T) {
+	t.Parallel()
+
+	config := docker.Config{}
+	structutils.Defaults(&config)
+
+	dr, err := docker.New(
+		net.TCPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: 2222,
+			Zone: "",
+		},
+		"0123456789AAAAAE",
+		config,
+		createLogger(t),
+	)
+	must(t, assert.Nil(t, err))
+	ssh, err := dr.OnHandshakeSuccess("test")
+	must(t, assert.Nil(t, err))
+	defer dr.OnDisconnect()
+
+	session, err := ssh.OnSessionChannel(0, []byte{})
+	must(t, assert.Nil(t, err))
+
+	stdin := bytes.NewReader([]byte{})
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	done := make(chan struct{})
+	status := 0
+
+	assert.NoError(
+		t,
+		session.OnPtyRequest(0, "xterm", 80, 25, 800, 600, []byte("")),
+	)
+
+	go func() {
+		time.Sleep(time.Second)
+		assert.NoError(t, session.OnSignal(2, "USR1"))
+	}()
+
+	err = session.OnExecRequest(
+		1,
+		"sleep infinity & PID=$!; trap \"kill $PID\" USR1; wait; echo 'USR1 received'",
+		stdin,
+		&stdout,
+		&stderr,
+		func(exitStatus sshserver.ExitStatus) {
+			status = int(exitStatus)
+			done <- struct{}{}
+		},
+	)
+	must(t, assert.Nil(t, err))
+	<-done
+	stderrBytes := stderr.Bytes()
+	stdoutBytes := stdout.Bytes()
+	assert.Equal(t, []byte(nil), stderrBytes)
+	assert.Equal(t, []byte("USR1 received\r\n"), stdoutBytes)
+	assert.Equal(t, 0, status)
+}
+
+func readUntil(reader io.Reader, buffer []byte) error {
+	byteBuffer := bytes.NewBuffer([]byte{})
+	for {
+		buf := make([]byte, 1024)
+		n, err := reader.Read(buf)
+		if err != nil {
+			return err
+		}
+		byteBuffer.Write(buf[:n])
+		if bytes.Equal(byteBuffer.Bytes(), buffer) {
+			return nil
+		}
+	}
+}
+
 func initDockerRun(t *testing.T) (sshserver.NetworkConnectionHandler, sshserver.SSHConnectionHandler) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
+	config.Execution.DisableAgent = true
 	config.Execution.ShellCommand = []string{"/bin/sh"}
 
 	dr, err := docker.New(

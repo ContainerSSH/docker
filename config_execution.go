@@ -47,9 +47,13 @@ type ExecutionConfig struct {
 	IdleCommand []string `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/bin/sh\", \"-c\", \"sleep infinity & PID=$!; trap \\\"kill $PID\\\" INT TERM; wait\"]"`
 	// ShellCommand is the command used for launching shells when the container is in ExecutionModeConnection. Ignored in ExecutionModeSession.
 	ShellCommand []string `json:"shellCommand" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
-
+	// AgentPath contains the path to the ContainerSSH Guest Agent.
+	AgentPath string `json:"agentPath" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
+	// DisableAgent enables using the ContainerSSH Guest Agent.
+	DisableAgent bool `json:"disableAgent" yaml:"disableAgent"`
 	// Subsystems contains a map of subsystem names and their corresponding binaries in the container.
 	Subsystems map[string]string `json:"subsystems" yaml:"subsystems" comment:"Subsystem names and binaries map." default:"{\"sftp\":\"/usr/lib/openssh/sftp-server\"}"`
+
 	// ImagePullPolicy controls when to pull container images.
 	ImagePullPolicy ImagePullPolicy `json:"imagePullPolicy" yaml:"imagePullPolicy" comment:"Image pull policy" default:"IfNotPresent"`
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/containerssh/sshserver"
 	"github.com/containerssh/unixutils"
@@ -131,10 +130,7 @@ func (c *channelHandler) handleExecModeConnection(
 	}
 	c.exec = exec
 	if c.pty {
-		err := c.exec.resize(ctx, uint(c.rows), uint(c.columns))
-		if err != nil {
-			return nil, err
-		}
+		_ = c.exec.resize(ctx, uint(c.rows), uint(c.columns))
 	}
 	return onExit, nil
 }
@@ -234,14 +230,17 @@ func (c *channelHandler) OnSubsystem(
 	return fmt.Errorf("subsystem not supported")
 }
 
-func (c *channelHandler) OnSignal(_ uint64, _ string) error {
+func (c *channelHandler) OnSignal(_ uint64, signal string) error {
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec == nil {
 		return fmt.Errorf("program not running")
 	}
 
-	return nil
+	ctx, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.Signal)
+	defer cancelFunc()
+
+	return c.exec.signal(ctx, signal)
 }
 
 func (c *channelHandler) OnWindow(_ uint64, columns uint32, rows uint32, _ uint32, _ uint32) error {
@@ -251,7 +250,7 @@ func (c *channelHandler) OnWindow(_ uint64, columns uint32, rows uint32, _ uint3
 		return fmt.Errorf("program not running")
 	}
 
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.Window)
 	defer cancelFunc()
 
 	return c.exec.resize(ctx, uint(rows), uint(columns))

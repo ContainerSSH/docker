@@ -16,9 +16,9 @@ func NewDockerRun(
 	logger log.Logger,
 ) (sshserver.NetworkConnectionHandler, error) {
 	logger.Warningf(
-		"You are using the deprecated \"dockerrun\" backend which will be removed in future ContainerSSH " +
-			"versions. Please switch to the new \"docker\" backend. Please read the deprecation notice at " +
-			"https://containerssh.io/deprecations/dockerrun for instructions on upgrading.",
+		"You are using the dockerrun backend deprecated since ContainerSSH 0.4. This backend will be removed " +
+			"in the future. Please switch to the new docker backend as soon as possible. " +
+			"See https://containerssh.io/deprecations/dockerrun for details.",
 	)
 
 	config := Config{}
@@ -41,6 +41,7 @@ func NewDockerRun(
 		Subsystems:      legacyConfig.Config.Subsystems,
 		ShellCommand:    nil,
 		IdleCommand:     nil,
+		DisableAgent:    true,
 		ImagePullPolicy: ImagePullPolicyAlways,
 		disableCommand:  legacyConfig.Config.DisableCommand,
 	}

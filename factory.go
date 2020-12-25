@@ -16,6 +16,11 @@ func New(client net.TCPAddr, connectionID string, config Config, logger log.Logg
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+
+	if config.Execution.DisableAgent {
+		logger.Warningf("ContainerSSH Guest Agent support is disabled. Some functions will not work.")
+	}
+
 	return &networkHandler{
 		mutex:               &sync.Mutex{},
 		client:              client,

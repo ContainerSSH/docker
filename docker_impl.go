@@ -1,11 +1,15 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,6 +265,7 @@ loop:
 				logger:       d.logger,
 				attachResult: attachResult,
 				tty:          d.tty,
+				pid:          1,
 			}, nil
 		}
 		d.logger.Warninge(fmt.Errorf("failed to attach to exec, retrying in 10 seconds (%w)", lastError))
@@ -369,6 +374,22 @@ func (d *dockerV20Container) createExec(
 		return nil, err
 	}
 
+	pid := -1
+	if !d.config.Execution.DisableAgent {
+		// Read PID from execution
+		pidBytes := make([]byte, 4)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			_, err := attachResult.Reader.Read(pidBytes)
+			if err != nil {
+				return nil, err
+			}
+			pid = int(binary.LittleEndian.Uint32(pidBytes))
+		}
+	}
+
 	return &dockerV20Exec{
 		container:    d,
 		execID:       execID,
@@ -376,6 +397,7 @@ func (d *dockerV20Container) createExec(
 		logger:       d.logger,
 		attachResult: attachResult,
 		tty:          tty,
+		pid:          pid,
 	}, nil
 }
 
@@ -409,6 +431,15 @@ loop:
 
 func (d *dockerV20Container) createExecConfig(env map[string]string, tty bool, program []string) types.ExecConfig {
 	dockerEnv := createEnv(env)
+	if !d.config.Execution.DisableAgent {
+		agentPrefix := []string{
+			d.config.Execution.AgentPath,
+			"console",
+			"--pid",
+			"--",
+		}
+		program = append(agentPrefix, program...)
+	}
 	execConfig := types.ExecConfig{
 		Tty:          tty,
 		AttachStdin:  true,
@@ -447,6 +478,11 @@ loop:
 		if lastError == nil {
 			return attachResult, nil
 		}
+		if isPermanentError(lastError) {
+			err := fmt.Errorf("failed to attach to exec, permanent error (%w)", lastError)
+			d.logger.Errore(err)
+			return types.HijackedResponse{}, err
+		}
 		d.logger.Warninge(fmt.Errorf("failed to attach to exec, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -469,6 +505,97 @@ type dockerV20Exec struct {
 	logger       log.Logger
 	attachResult types.HijackedResponse
 	tty          bool
+	pid          int
+}
+
+var cannotSendSignalError = errors.New("cannot send signal")
+
+func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
+	if d.pid <= 0 {
+		return cannotSendSignalError
+	}
+	if d.pid == 1 {
+		return d.sendSignalToContainer(ctx, sig)
+	}
+	return d.sendSignalToProcess(ctx, sig)
+}
+
+func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) error {
+	if d.container.config.Execution.DisableAgent {
+		return fmt.Errorf("cannot send signal")
+	}
+	d.logger.Debugf("Using the exec facility to send signal %s to pid %d...", sig, d.pid)
+	exec, err := d.container.createExec(
+		ctx, []string{
+			d.container.config.Execution.AgentPath,
+			"signal",
+			"--pid",
+			strconv.Itoa(d.pid),
+			"--signal",
+			sig,
+		}, map[string]string{}, false,
+	)
+	if err != nil {
+		d.logger.Errorf(
+			"cannot send %s signal to container %s pid %d (%v)",
+			sig, d.container.containerID, d.pid, err,
+		)
+		return cannotSendSignalError
+	}
+	var stdoutBytes bytes.Buffer
+	var stderrBytes bytes.Buffer
+	stdin, stdinWriter := io.Pipe()
+	done := make(chan struct{})
+	exec.run(
+		&stdoutBytes, &stderrBytes, stdin, func(exitStatus int) {
+			if exitStatus != 0 {
+				err = cannotSendSignalError
+				d.logger.Errorf(
+					"cannot send %s signal to container %s pid %d (%s)",
+					sig, d.container.containerID, d.pid, stderrBytes,
+				)
+			}
+			done <- struct{}{}
+		},
+	)
+	<-done
+	_ = stdinWriter.Close()
+	return err
+}
+
+func (d *dockerV20Exec) sendSignalToContainer(ctx context.Context, sig string) error {
+	var lastError error
+loop:
+	for {
+		lastError = d.dockerClient.ContainerKill(ctx, d.container.containerID, sig)
+		if lastError == nil {
+			return nil
+		}
+		if isPermanentError(lastError) {
+			err := fmt.Errorf(
+				"cannot send %s signal to container %s, permanent error (%w)",
+				sig, d.container.containerID, lastError,
+			)
+			d.logger.Errore(err)
+			return err
+		}
+		d.logger.Warninge(
+			fmt.Errorf(
+				"cannot send %s signal to container %s, retrying in 10 seconds (%w)",
+				sig, d.container.containerID, lastError,
+			),
+		)
+		select {
+		case <-ctx.Done():
+			break loop
+		case <-time.After(10 * time.Second):
+		}
+	}
+	if lastError == nil {
+		lastError = fmt.Errorf("timeout")
+	}
+	d.logger.Errorf("cannot send signal %s to container %s, giving up (%v)", sig, d.container.containerID, lastError)
+	return cannotSendSignalError
 }
 
 func (d *dockerV20Exec) resize(ctx context.Context, height uint, width uint) error {
@@ -486,6 +613,12 @@ loop:
 		)
 		if lastError == nil {
 			return nil
+		}
+		if isPermanentError(lastError) {
+			err := fmt.Errorf("failed to resize window, permanent error (%w)", lastError)
+			// Debug level because resizes can fail for legitimate reasons, such as invalid program paths.
+			d.logger.Debuge(err)
+			return err
 		}
 		d.logger.Warninge(fmt.Errorf("failed to resize window, retrying in 10 seconds (%w)", lastError))
 		select {
@@ -527,7 +660,6 @@ func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader,
 		}()
 	}
 	go func() {
-		defer d.done(onExit)
 		_, err := io.Copy(d.attachResult.Conn, stdin)
 		if err != nil && !errors.Is(err, io.EOF) {
 			d.logger.Warninge(
@@ -538,6 +670,7 @@ func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader,
 }
 
 func (d *dockerV20Exec) done(onExit func(exitStatus int)) {
+	d.pid = -1
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelFunc()
 	var lastError error
@@ -575,8 +708,10 @@ loop:
 				}
 			}
 		}
-		if client.IsErrNotFound(lastError) {
-			d.logger.Errore(fmt.Errorf("failed to fetch exit code, container already removed (%w)", lastError))
+		if isPermanentError(lastError) {
+			err := fmt.Errorf("failed to fetch exit code, permanent error (%w)", lastError)
+			d.logger.Errore(err)
+			return
 		}
 		d.logger.Warninge(
 			fmt.Errorf("failed to fetch container exit code, retrying in 10 seconds (%w)", lastError),
@@ -628,4 +763,12 @@ loop:
 	err := fmt.Errorf("failed to stop container, giving up (%w)", lastError)
 	d.logger.Errore(err)
 	return err
+}
+
+func isPermanentError(err error) bool {
+	return client.IsErrNotFound(err) ||
+		client.IsErrNotImplemented(err) ||
+		client.IsErrPluginPermissionDenied(err) ||
+		client.IsErrUnauthorized(err) ||
+		strings.Contains(err.Error(), "")
 }
