@@ -3,8 +3,8 @@
 <!--suppress HtmlDeprecatedAttribute -->
 <h1 align="center">ContainerSSH Docker Backend Library</h1>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/containerssh/docker?style=for-the-badge)](https://goreportcard.com/report/github.com/containerssh/library-template)
-[![LGTM Alerts](https://img.shields.io/lgtm/alerts/github/ContainerSSH/docker?style=for-the-badge)](https://lgtm.com/projects/g/ContainerSSH/library-template/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/containerssh/docker?style=for-the-badge)](https://goreportcard.com/report/github.com/containerssh/docker)
+[![LGTM Alerts](https://img.shields.io/lgtm/alerts/github/ContainerSSH/docker?style=for-the-badge)](https://lgtm.com/projects/g/ContainerSSH/docker/)
 
 This library implements a backend that connects to a Docker socket and launches a new container for each connection, then runs executes a separate command per channel using `docker exec`. It replaces the legacy `dockerrun` backend.
 
