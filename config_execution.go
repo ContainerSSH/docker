@@ -72,7 +72,7 @@ func (c ExecutionConfig) Validate() error {
 	}
 	switch c.Mode {
 	case ExecutionModeSession:
-		if !c.Launch.HostConfig.RestartPolicy.IsNone() {
+		if c.Launch.HostConfig != nil && !c.Launch.HostConfig.RestartPolicy.IsNone() {
 			return fmt.Errorf(
 				"unsupported restart policy for execution mode \"session\": %s (session containers may not restart)",
 				c.Launch.HostConfig.RestartPolicy.Name,
