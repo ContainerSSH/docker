@@ -62,7 +62,7 @@ type dockerExecution interface {
 	// signal sends the given signal to the currently running process. Returns an error if the process is not running,
 	// the signal is not known or permitted, or the process ID is not known.
 	signal(ctx context.Context, sig string) error
-	// run runs the proces in question.
+	// run runs the process in question.
 	run(
 		stdout io.Writer,
 		stderr io.Writer,

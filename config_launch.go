@@ -43,13 +43,16 @@ type tmpLaunchConfig struct {
 // This is needed because Docker treats removing fields as backwards-compatible.
 // See https://github.com/moby/moby/pull/39158#issuecomment-489704731
 func (l *LaunchConfig) UnmarshalJSON(b []byte) error {
-	type launchConfig = LaunchConfig
 	decoder := json.NewDecoder(bytes.NewReader(b))
-	lc := &launchConfig{}
-	if err := decoder.Decode(lc); err != nil {
+	tmp := &tmpLaunchConfig{}
+	if err := decoder.Decode(tmp); err != nil {
 		return err
 	}
-	*l = *lc
+	l.ContainerConfig = tmp.ContainerConfig
+	l.HostConfig = tmp.HostConfig
+	l.NetworkConfig = tmp.NetworkConfig
+	l.Platform = tmp.Platform
+	l.ContainerName = tmp.ContainerName
 	return nil
 }
 
