@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.2: More compatibility fixes
+
+This release adds more compatibility fixes with the 0.3 config format and the ability to unserialize durations from string instead of numbers.
+
 ## 0.9.1: JSON unmarshalling
 
 The previous version of this library incorrectly unmarshalled JSON causing an endless loop. This release fixes JSON unmarshalling.
