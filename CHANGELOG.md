@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.3: Nil support
+
+In this release we are adding support for `nil` values when unmashalling JSON/YAML into time.Duration structures.
+
 ## 0.9.2: More compatibility fixes
 
 This release adds more compatibility fixes with the 0.3 config format and the ability to unserialize durations from string instead of numbers.

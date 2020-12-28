@@ -1,13 +1,15 @@
 package docker
 
 import (
-	"errors"
+	"fmt"
 	"time"
 )
 
 func parseRawDuration(rawValue interface{}, d *time.Duration) error {
 	var err error
 	switch value := rawValue.(type) {
+	case nil:
+		*d = time.Duration(0)
 	case int32:
 		*d = time.Duration(value)
 	case int64:
@@ -23,7 +25,7 @@ func parseRawDuration(rawValue interface{}, d *time.Duration) error {
 			return err
 		}
 	default:
-		return errors.New("invalid duration")
+		return fmt.Errorf("invalid duration: %v", rawValue)
 	}
 	return nil
 }
