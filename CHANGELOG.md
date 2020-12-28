@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.4: Bug fix 
+
+Fixed nil pointer on validation when host config is nil.
+
 ## 0.9.3: Nil support
 
 In this release we are adding support for `nil` values when unmashalling JSON/YAML into time.Duration structures.
