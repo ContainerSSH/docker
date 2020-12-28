@@ -116,6 +116,7 @@
     "subsystems": {
       "sftp": "/usr/lib/openssh/sftp-server"
     },
-    "disableCommand": false
+    "disableCommand": false,
+    "timeout": "60s"
   }
 }
