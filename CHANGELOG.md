@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.5: Metrics integration
+
+This release integrates the [metrics library](https://github.com/containerssh/metrics) and adds two parameters to `New` and `NewDockerRun` methods:
+
+- `backendRequestsMetric` is a counter counting the number of requests to the Docker daemon.
+- `backendFailuresMetric` is a counter counting the number of failed requests to the docker daemon.
+
 ## 0.9.4: Bug fix 
 
 Fixed nil pointer on validation when host config is nil.

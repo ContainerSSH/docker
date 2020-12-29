@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/containerssh/geoip"
 	"github.com/containerssh/log"
+	"github.com/containerssh/metrics"
 	"github.com/containerssh/sshserver"
 	"github.com/containerssh/structutils"
 	"github.com/docker/docker/api/types"
@@ -28,6 +30,52 @@ func must(t *testing.T, arg bool) {
 	}
 }
 
+func getDocker(t *testing.T, config docker.Config) (sshserver.NetworkConnectionHandler, string) {
+	connectionID := sshserver.GenerateConnectionID()
+	geoipProvider, err := geoip.New(geoip.Config{
+		Provider: geoip.DummyProvider,
+	})
+	must(t, assert.NoError(t, err))
+	collector := metrics.New(geoipProvider)
+	dr, err := docker.New(
+		net.TCPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: 2222,
+			Zone: "",
+		},
+		connectionID,
+		config,
+		createLogger(t),
+		collector.MustCreateCounter("backend_requests", "", ""),
+		collector.MustCreateCounter("backend_failures", "", ""),
+	)
+	must(t, assert.NoError(t, err))
+	return dr, connectionID
+}
+
+//goland:noinspection GoDeprecation
+func getDockerRun(t *testing.T, config docker.DockerRunConfig) sshserver.NetworkConnectionHandler {
+	geoipProvider, err := geoip.New(geoip.Config{
+		Provider: geoip.DummyProvider,
+	})
+	must(t, assert.NoError(t, err))
+	collector := metrics.New(geoipProvider)
+	dr, err := docker.NewDockerRun(
+		net.TCPAddr{
+			IP:   net.ParseIP("127.0.0.1"),
+			Port: 2222,
+			Zone: "",
+		},
+		sshserver.GenerateConnectionID(),
+		config,
+		createLogger(t),
+		collector.MustCreateCounter("backend_requests", "", ""),
+		collector.MustCreateCounter("backend_failures", "", ""),
+	)
+	must(t, assert.NoError(t, err))
+	return dr
+}
+
 func TestConnectAndDisconnectShouldCreateAndRemoveContainer(t *testing.T) {
 	t.Parallel()
 
@@ -36,18 +84,8 @@ func TestConnectAndDisconnectShouldCreateAndRemoveContainer(t *testing.T) {
 
 	config.Execution.Launch.ContainerConfig.Image = "containerssh/containerssh-guest-image"
 
-	dr, err := docker.New(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAA",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
-	_, err = dr.OnHandshakeSuccess("test")
+	dr, connectionID := getDocker(t, config)
+	_, err := dr.OnHandshakeSuccess("test")
 	defer dr.OnDisconnect()
 	must(t, assert.Nil(t, err))
 
@@ -59,7 +97,7 @@ func TestConnectAndDisconnectShouldCreateAndRemoveContainer(t *testing.T) {
 	f := filters.NewArgs()
 	f.Add("label", "containerssh_username=test")
 	f.Add("label", "containerssh_ip=127.0.0.1")
-	f.Add("label", "containerssh_connection_id=0123456789AAAAAA")
+	f.Add("label", "containerssh_connection_id="+connectionID)
 	containers, err := dockerClient.ContainerList(
 		context.Background(),
 		types.ContainerListOptions{
@@ -81,17 +119,7 @@ func TestSingleSessionShouldRunProgram(t *testing.T) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
 
-	dr, err := docker.New(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAB",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
+	dr, _ := getDocker(t, config)
 	ssh, err := dr.OnHandshakeSuccess("test")
 	must(t, assert.Nil(t, err))
 	defer dr.OnDisconnect()
@@ -138,17 +166,7 @@ func TestSingleSessionShouldRunProgramDockerRunConfig(t *testing.T) {
 	unmarshaller.KnownFields(true)
 	assert.NoError(t, unmarshaller.Decode(&config))
 
-	dr, err := docker.NewDockerRun(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAC",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
+	dr := getDockerRun(t, config)
 	ssh, err := dr.OnHandshakeSuccess("test")
 	must(t, assert.Nil(t, err))
 	defer dr.OnDisconnect()
@@ -189,17 +207,7 @@ func TestSettingEnvShouldWork(t *testing.T) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
 
-	dr, err := docker.New(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAD",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
+	dr, _ := getDocker(t, config)
 	ssh, err := dr.OnHandshakeSuccess("test")
 	must(t, assert.Nil(t, err))
 	defer dr.OnDisconnect()
@@ -293,17 +301,7 @@ func TestSendingSignalShouldWork(t *testing.T) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
 
-	dr, err := docker.New(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAE",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
+	dr, _ := getDocker(t, config)
 	ssh, err := dr.OnHandshakeSuccess("test")
 	must(t, assert.Nil(t, err))
 	defer dr.OnDisconnect()
@@ -368,17 +366,7 @@ func initDockerRun(t *testing.T) (sshserver.NetworkConnectionHandler, sshserver.
 	config.Execution.DisableAgent = true
 	config.Execution.ShellCommand = []string{"/bin/sh"}
 
-	dr, err := docker.New(
-		net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: 2222,
-			Zone: "",
-		},
-		"0123456789AAAAAC",
-		config,
-		createLogger(t),
-	)
-	must(t, assert.Nil(t, err))
+	dr, _ := getDocker(t, config)
 	ssh, err := dr.OnHandshakeSuccess("test")
 	must(t, assert.Nil(t, err))
 	return dr, ssh

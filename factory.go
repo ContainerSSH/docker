@@ -5,11 +5,19 @@ import (
 	"sync"
 
 	"github.com/containerssh/log"
+	"github.com/containerssh/metrics"
 	"github.com/containerssh/sshserver"
 )
 
 // New creates a new NetworkConnectionHandler for a specific client.
-func New(client net.TCPAddr, connectionID string, config Config, logger log.Logger) (
+func New(
+	client net.TCPAddr,
+	connectionID string,
+	config Config,
+	logger log.Logger,
+	backendRequestsMetric metrics.SimpleCounter,
+	backendFailuresMetric metrics.SimpleCounter,
+) (
 	sshserver.NetworkConnectionHandler,
 	error,
 ) {
@@ -22,12 +30,15 @@ func New(client net.TCPAddr, connectionID string, config Config, logger log.Logg
 	}
 
 	return &networkHandler{
-		mutex:               &sync.Mutex{},
-		client:              client,
-		connectionID:        connectionID,
-		config:              config,
-		logger:              logger,
-		disconnected:        false,
-		dockerClientFactory: &dockerV20ClientFactory{},
+		mutex:        &sync.Mutex{},
+		client:       client,
+		connectionID: connectionID,
+		config:       config,
+		logger:       logger,
+		disconnected: false,
+		dockerClientFactory: &dockerV20ClientFactory{
+			backendFailuresMetric: backendFailuresMetric,
+			backendRequestsMetric: backendRequestsMetric,
+		},
 	}, nil
 }

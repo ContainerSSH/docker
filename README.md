@@ -22,7 +22,13 @@ connectionID := "0123456789ABCDEF"
 config := docker.Config{
     //...
 }
-dr, err := docker.New(client, connectionID, config, logger)
+collector := metrics.New
+dr, err := docker.New(
+    client,
+    connectionID,
+    config,
+    logger,
+)
 if err != nil {
     // Handle error
 }
