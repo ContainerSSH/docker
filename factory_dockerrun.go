@@ -4,6 +4,7 @@ import (
 	"net"
 
 	"github.com/containerssh/log"
+	"github.com/containerssh/metrics"
 	"github.com/containerssh/sshserver"
 )
 
@@ -14,6 +15,8 @@ func NewDockerRun(
 	connectionID string,
 	legacyConfig DockerRunConfig,
 	logger log.Logger,
+	backendRequestsMetric metrics.SimpleCounter,
+	backendFailuresMetric metrics.SimpleCounter,
 ) (sshserver.NetworkConnectionHandler, error) {
 	logger.Warningf(
 		"You are using the dockerrun backend deprecated since ContainerSSH 0.4. This backend will be removed " +
@@ -51,5 +54,12 @@ func NewDockerRun(
 		CommandStart:   legacyConfig.Config.Timeout,
 	}
 
-	return New(client, connectionID, config, logger)
+	return New(
+		client,
+		connectionID,
+		config,
+		logger,
+		backendRequestsMetric,
+		backendFailuresMetric,
+	)
 }

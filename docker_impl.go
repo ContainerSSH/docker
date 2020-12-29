@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/containerssh/log"
+	"github.com/containerssh/metrics"
 	"github.com/containerssh/structutils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -22,6 +23,10 @@ import (
 )
 
 type dockerV20ClientFactory struct {
+	// backendFailuresMetric counts the failed requests to the backend.
+	backendFailuresMetric metrics.SimpleCounter
+	// backendRequestsMetric counts the requests to the backend.
+	backendRequestsMetric metrics.SimpleCounter
 }
 
 func (f *dockerV20ClientFactory) getDockerClient(ctx context.Context, config Config) (*client.Client, error) {
@@ -54,6 +59,9 @@ func (f *dockerV20ClientFactory) get(ctx context.Context, config Config, logger 
 		config:       config,
 		dockerClient: dockerClient,
 		logger:       logger,
+
+		backendFailuresMetric: f.backendFailuresMetric,
+		backendRequestsMetric: f.backendRequestsMetric,
 	}, nil
 }
 
@@ -61,6 +69,11 @@ type dockerV20Client struct {
 	config       Config
 	dockerClient *client.Client
 	logger       log.Logger
+
+	// backendFailuresMetric counts the failed requests to the backend.
+	backendFailuresMetric metrics.SimpleCounter
+	// backendRequestsMetric counts the requests to the backend.
+	backendRequestsMetric metrics.SimpleCounter
 }
 
 func (d *dockerV20Client) getImageName() string {
@@ -75,11 +88,13 @@ func (d *dockerV20Client) hasImage(ctx context.Context) (bool, error) {
 	var lastError error
 loop:
 	for {
+		d.backendRequestsMetric.Increment()
 		_, _, lastError := d.dockerClient.ImageInspectWithRaw(ctx, image)
 		if lastError != nil {
 			if client.IsErrNotFound(lastError) {
 				return false, nil
 			}
+			d.backendFailuresMetric.Increment()
 			d.logger.Warninge(
 				fmt.Errorf("failed to list images, retrying in 10 seconds (%w)", lastError),
 			)
@@ -112,6 +127,7 @@ func (d *dockerV20Client) pullImage(ctx context.Context) error {
 loop:
 	for {
 		var pullReader io.ReadCloser
+		d.backendRequestsMetric.Increment()
 		pullReader, lastError = d.dockerClient.ImagePull(ctx, image, types.ImagePullOptions{})
 		if lastError == nil {
 			_, lastError = ioutil.ReadAll(pullReader)
@@ -122,6 +138,7 @@ loop:
 				}
 			}
 		}
+		d.backendFailuresMetric.Increment()
 		if pullReader != nil {
 			_ = pullReader.Close()
 		}
@@ -164,6 +181,7 @@ func (d *dockerV20Client) createContainer(
 loop:
 	for {
 		var body container.ContainerCreateCreatedBody
+		d.backendRequestsMetric.Increment()
 		body, lastError = d.dockerClient.ContainerCreate(
 			ctx,
 			newConfig,
@@ -174,13 +192,16 @@ loop:
 		)
 		if lastError == nil {
 			return &dockerV20Container{
-				config:       d.config,
-				containerID:  body.ID,
-				dockerClient: d.dockerClient,
-				logger:       d.logger,
-				tty:          d.config.Execution.Launch.ContainerConfig.Tty,
+				config:                d.config,
+				containerID:           body.ID,
+				dockerClient:          d.dockerClient,
+				logger:                d.logger,
+				tty:                   d.config.Execution.Launch.ContainerConfig.Tty,
+				backendRequestsMetric: d.backendRequestsMetric,
+				backendFailuresMetric: d.backendFailuresMetric,
 			}, nil
 		}
+		d.backendFailuresMetric.Increment()
 		d.logger.Warninge(fmt.Errorf("failed to create container, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -231,11 +252,13 @@ func (d *dockerV20Client) createConfig(
 }
 
 type dockerV20Container struct {
-	config       Config
-	containerID  string
-	logger       log.Logger
-	dockerClient *client.Client
-	tty          bool
+	config                Config
+	containerID           string
+	logger                log.Logger
+	dockerClient          *client.Client
+	tty                   bool
+	backendRequestsMetric metrics.SimpleCounter
+	backendFailuresMetric metrics.SimpleCounter
 }
 
 func (d *dockerV20Container) attach(ctx context.Context) (dockerExecution, error) {
@@ -246,6 +269,7 @@ func (d *dockerV20Container) attach(ctx context.Context) (dockerExecution, error
 	var lastError error
 loop:
 	for {
+		d.backendRequestsMetric.Increment()
 		attachResult, lastError = d.dockerClient.ContainerAttach(
 			ctx,
 			d.containerID,
@@ -268,6 +292,7 @@ loop:
 				pid:          1,
 			}, nil
 		}
+		d.backendFailuresMetric.Increment()
 		d.logger.Warninge(fmt.Errorf("failed to attach to exec, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -290,6 +315,7 @@ func (d *dockerV20Container) start(ctx context.Context) error {
 	var lastError error
 loop:
 	for {
+		d.backendRequestsMetric.Increment()
 		lastError = d.dockerClient.ContainerStart(
 			ctx,
 			d.containerID,
@@ -298,6 +324,7 @@ loop:
 		if lastError == nil {
 			return nil
 		}
+		d.backendFailuresMetric.Increment()
 		d.logger.Warninge(fmt.Errorf("failed to start container, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -320,12 +347,14 @@ func (d *dockerV20Container) remove(ctx context.Context) error {
 	var lastError error
 loop:
 	for {
+		d.backendRequestsMetric.Increment()
 		_, lastError = d.dockerClient.ContainerInspect(ctx, d.containerID)
 		if lastError != nil && client.IsErrNotFound(lastError) {
 			return nil
 		}
 
 		if lastError == nil {
+			d.backendRequestsMetric.Increment()
 			lastError = d.dockerClient.ContainerRemove(
 				ctx, d.containerID, types.ContainerRemoveOptions{
 					Force: true,
@@ -335,6 +364,7 @@ loop:
 				return nil
 			}
 		}
+		d.backendFailuresMetric.Increment()
 		d.logger.Warninge(
 			fmt.Errorf("failed to remove container on disconnect, retrying in 10 seconds (%w)", lastError),
 		)
@@ -406,6 +436,7 @@ func (d *dockerV20Container) realCreateExec(ctx context.Context, execConfig type
 loop:
 	for {
 		var response types.IDResponse
+		d.backendRequestsMetric.Increment()
 		response, lastError = d.dockerClient.ContainerExecCreate(
 			ctx,
 			d.containerID,
@@ -414,6 +445,7 @@ loop:
 		if lastError == nil {
 			return response.ID, nil
 		}
+		d.backendFailuresMetric.Increment()
 		d.logger.Warninge(fmt.Errorf("failed to create exec, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -467,6 +499,7 @@ func (d *dockerV20Container) attachExec(ctx context.Context, execID string, conf
 	var lastError error
 loop:
 	for {
+		d.backendRequestsMetric.Increment()
 		attachResult, lastError = d.dockerClient.ContainerExecAttach(
 			ctx,
 			execID,
@@ -478,6 +511,7 @@ loop:
 		if lastError == nil {
 			return attachResult, nil
 		}
+		d.backendFailuresMetric.Increment()
 		if isPermanentError(lastError) {
 			err := fmt.Errorf("failed to attach to exec, permanent error (%w)", lastError)
 			d.logger.Errore(err)
@@ -734,6 +768,7 @@ func (d *dockerV20Exec) stopContainer(ctx context.Context) error {
 loop:
 	for {
 		var inspectResult types.ContainerJSON
+		d.container.backendRequestsMetric.Increment()
 		inspectResult, lastError = d.dockerClient.ContainerInspect(ctx, d.container.containerID)
 		if lastError == nil {
 			if inspectResult.State.Status == "stopped" {
@@ -747,6 +782,8 @@ loop:
 			if lastError == nil {
 				return nil
 			}
+		} else if lastError != nil {
+			d.container.backendFailuresMetric.Increment()
 		}
 		d.logger.Warninge(
 			fmt.Errorf("failed to stop container, retrying in 10 seconds (%w)", lastError),
