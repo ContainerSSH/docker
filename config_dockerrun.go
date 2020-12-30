@@ -3,12 +3,24 @@ package docker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-//goland:noinspection GoNameStartsWithPackageName
+// Validate validates the docker run config
+//goland:noinspection GoDeprecation
+func (config DockerRunConfig) Validate() error {
+	if config.Host == "" {
+		return fmt.Errorf("empty Docker host provided")
+	}
+	if err := config.Config.Validate(); err != nil {
+		return fmt.Errorf("invalid dockerrun config (%w)", err)
+	}
+	return nil
+}
+
 //Deprecated: Switch to the more generic "docker" backend.
 //goland:noinspection GoNameStartsWithPackageName,GoDeprecation
 type DockerRunContainerConfig struct {
@@ -69,6 +81,12 @@ func (d *DockerRunContainerConfig) UnmarshalYAML(unmarshal func(interface{}) err
 	}
 	d.LaunchConfig = lc
 	return nil
+}
+
+// Validate validates the container config
+//goland:noinspection GoDeprecation
+func (d *DockerRunContainerConfig) Validate() error {
+	return d.LaunchConfig.Validate()
 }
 
 type tmpDockerRunContainerConfig struct {

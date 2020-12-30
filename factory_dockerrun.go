@@ -9,6 +9,7 @@ import (
 )
 
 // NewDockerRun creates a new NetworkConnectionHandler based on the deprecated "dockerrun" config structure.
+// Deprecated: use New instead
 //goland:noinspection GoDeprecation
 func NewDockerRun(
 	client net.TCPAddr,

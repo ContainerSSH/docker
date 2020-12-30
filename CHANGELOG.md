@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.6: Added Validate() for DockerRun
+
+This release adds a `Validate()` method for the DockerRun backend.
+
 ## 0.9.5: Metrics integration
 
 This release integrates the [metrics library](https://github.com/containerssh/metrics) and adds two parameters to `New` and `NewDockerRun` methods:

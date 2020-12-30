@@ -3,6 +3,7 @@ package docker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -77,5 +78,16 @@ func (l *LaunchConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	l.NetworkConfig = tmp.NetworkConfig
 	l.Platform = tmp.Platform
 	l.ContainerName = tmp.ContainerName
+	return nil
+}
+
+// Validate validates the launch configuration.
+func (l *LaunchConfig) Validate() error {
+	if l.ContainerConfig == nil {
+		return fmt.Errorf("no container config provided")
+	}
+	if l.ContainerConfig.Image == "" {
+		return fmt.Errorf("no image name provided")
+	}
 	return nil
 }

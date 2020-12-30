@@ -82,7 +82,9 @@ func (c ExecutionConfig) Validate() error {
 	if err := c.ImagePullPolicy.Validate(); err != nil {
 		return err
 	}
-
+	if err := c.Launch.Validate(); err != nil {
+		return err
+	}
 	if err := c.Mode.Validate(); err != nil {
 		return err
 	}
