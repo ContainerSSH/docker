@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/containerssh/log"
@@ -670,8 +669,6 @@ loop:
 }
 
 func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader, onExit func(exitStatus int)) {
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
 	if d.tty {
 		go func() {
 			defer d.done(onExit)

@@ -8,6 +8,7 @@ require (
 	github.com/containerssh/geoip v0.9.3
 	github.com/containerssh/log v0.9.7
 	github.com/containerssh/metrics v0.9.4
+	github.com/containerssh/service v0.9.0
 	github.com/containerssh/sshserver v0.9.14
 	github.com/containerssh/structutils v0.9.0
 	github.com/containerssh/unixutils v0.9.0
@@ -24,6 +25,7 @@ require (
 	github.com/opencontainers/image-spec v1.0.1
 	github.com/sirupsen/logrus v1.7.0 // indirect
 	github.com/stretchr/testify v1.6.1
+	golang.org/x/crypto v0.0.0-20201208171446-5f87f3452ae9
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324 // indirect
 	google.golang.org/grpc v1.34.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c
