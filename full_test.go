@@ -194,7 +194,6 @@ func (f *fullHandler) OnNetworkConnection(client net.TCPAddr, connectionID strin
 	config := docker.Config{}
 	structutils.Defaults(&config)
 	config.Execution.Mode = f.mode
-	config.Connection.Host = "tcp://localhost:2375"
 
 	backend, err := docker.New(
 		client,
