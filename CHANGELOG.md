@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.7: Regression bugfix
+
+This release fixes a regression where non-TTY connections would not be handled correctly when running in `connection` mode.
+
 ## 0.9.6: Added Validate() for DockerRun
 
 This release adds a `Validate()` method for the DockerRun backend.

@@ -195,7 +195,7 @@ loop:
 				containerID:           body.ID,
 				dockerClient:          d.dockerClient,
 				logger:                d.logger,
-				tty:                   d.config.Execution.Launch.ContainerConfig.Tty,
+				tty:                   newConfig.Tty,
 				backendRequestsMetric: d.backendRequestsMetric,
 				backendFailuresMetric: d.backendFailuresMetric,
 			}, nil
@@ -309,7 +309,7 @@ loop:
 
 func (d *dockerV20Container) start(ctx context.Context) error {
 	d.logger.Debugf(
-		"Starting to container...",
+		"Starting container...",
 	)
 	var lastError error
 loop:
@@ -403,22 +403,7 @@ func (d *dockerV20Container) createExec(
 		return nil, err
 	}
 
-	pid := -1
-	if !d.config.Execution.DisableAgent {
-		// Read PID from execution
-		pidBytes := make([]byte, 4)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			_, err := attachResult.Reader.Read(pidBytes)
-			if err != nil {
-				return nil, err
-			}
-			pid = int(binary.LittleEndian.Uint32(pidBytes))
-		}
-	}
-
+	pid := 0
 	return &dockerV20Exec{
 		container:    d,
 		execID:       execID,
@@ -638,12 +623,19 @@ func (d *dockerV20Exec) resize(ctx context.Context, height uint, width uint) err
 	var lastError error
 loop:
 	for {
-		lastError = d.dockerClient.ContainerExecResize(
-			ctx, d.execID, types.ResizeOptions{
-				Height: height,
-				Width:  width,
-			},
-		)
+		resizeOptions := types.ResizeOptions{
+			Height: height,
+			Width:  width,
+		}
+		if d.execID != "" {
+			lastError = d.dockerClient.ContainerExecResize(
+				ctx, d.execID, resizeOptions,
+			)
+		} else {
+			lastError = d.dockerClient.ContainerResize(
+				ctx, d.container.containerID, resizeOptions,
+			)
+		}
 		if lastError == nil {
 			return nil
 		}
@@ -668,28 +660,45 @@ loop:
 	return err
 }
 
-func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader, onExit func(exitStatus int)) {
-	if d.tty {
-		go func() {
-			defer d.done(onExit)
-			_, err := io.Copy(stdout, d.attachResult.Reader)
-			if err != nil && !errors.Is(err, io.EOF) {
-				d.logger.Warninge(
-					fmt.Errorf("failed to stream TTY output (%w)", err),
-				)
-			}
-		}()
-	} else {
-		go func() {
-			defer d.done(onExit)
-			_, err := stdcopy.StdCopy(stdout, stderr, d.attachResult.Reader)
-			if err != nil && !errors.Is(err, io.EOF) {
-				d.logger.Warninge(
-					fmt.Errorf("failed to stream raw output (%w)", err),
-				)
-			}
-		}()
+func (d *dockerV20Exec) readBytesFromReader(source io.Reader, bytes uint) ([]byte, error) {
+	finalBuffer := make([]byte, bytes)
+	readIndex := uint(0)
+	for {
+		buf := make([]byte, bytes-readIndex)
+		readBytes, err := source.Read(buf)
+		copy(finalBuffer[readIndex:readBytes], buf[:readBytes])
+		readIndex = readIndex + uint(readBytes)
+		if err != nil {
+			return finalBuffer[:readIndex], err
+		}
+		if readIndex == bytes {
+			return finalBuffer, nil
+		}
 	}
+}
+
+func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader, onExit func(exitStatus int)) {
+	if d.container.config.Execution.Mode == ExecutionModeConnection && !d.container.config.Execution.DisableAgent {
+		if err := d.readPIDFromStdout(stdout); err != nil {
+			d.logger.Errore(err)
+			onExit(137)
+			return
+		}
+	}
+	go func() {
+		defer d.done(onExit)
+		var err error
+		if d.tty {
+			_, err = io.Copy(stdout, d.attachResult.Reader)
+		} else {
+			_, err = stdcopy.StdCopy(stdout, stderr, d.attachResult.Reader)
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			d.logger.Warninge(
+				fmt.Errorf("failed to stream output (%w)", err),
+			)
+		}
+	}()
 	go func() {
 		_, err := io.Copy(d.attachResult.Conn, stdin)
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -698,6 +707,58 @@ func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader,
 			)
 		}
 	}()
+}
+
+func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
+	// Read PID from execution
+	var pidBytes []byte
+	var err error
+	if d.tty {
+		pidBytes, err = d.readBytesFromReader(d.attachResult.Reader, 4)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Read a single frame from the Docker socket to get the PID.
+		// See https://docs.docker.com/engine/api/v1.41/#operation/ContainerAttach
+		var headerBuffer []byte
+		headerBuffer, err = d.readBytesFromReader(d.attachResult.Reader, 8)
+		if err != nil {
+			return fmt.Errorf("failed to read pid from ContainerSSH agent (%w)", err)
+		}
+		stream := headerBuffer[0]
+		if stream > 2 {
+			return fmt.Errorf("invalid stream type received from Docker daemon: %d", stream)
+		}
+		frameLength := binary.BigEndian.Uint32(headerBuffer[4:])
+		frameData, err := d.readBytesFromReader(d.attachResult.Reader, uint(frameLength))
+		if err != nil {
+			return fmt.Errorf("failed to read pid from ContainerSSH agent (%w)", err)
+		}
+		if frameLength < 4 {
+			return fmt.Errorf(
+				"not enough data received (%d bytes) from Docker daemon while trying to read pid from ContainerSSH agent",
+				frameLength,
+			)
+		}
+		switch stream {
+		case 0:
+			fallthrough
+		case 1:
+			pidBytes = frameData[:4]
+			if frameLength > 4 {
+				if _, err := stdout.Write(frameData[4:]); err != nil {
+					return fmt.Errorf("failed to write remaining frame data to stdout (%w)", err)
+				}
+			}
+		case 2:
+			return fmt.Errorf(
+				"unexpected data on stderr when trying to read pid from ContainerSSH agent",
+			)
+		}
+	}
+	d.pid = int(binary.LittleEndian.Uint32(pidBytes))
+	return nil
 }
 
 func (d *dockerV20Exec) done(onExit func(exitStatus int)) {

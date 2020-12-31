@@ -162,16 +162,16 @@ func (c *channelHandler) handleExecModeSession(
 		removeContainer()
 		return nil, err
 	}
+	if err := cnt.start(ctx); err != nil {
+		removeContainer()
+		return nil, err
+	}
 	if c.pty {
 		err := c.exec.resize(ctx, uint(c.rows), uint(c.columns))
 		if err != nil {
 			removeContainer()
 			return nil, err
 		}
-	}
-	if err := cnt.start(ctx); err != nil {
-		removeContainer()
-		return nil, err
 	}
 	onExitWrapper := func(exitStatus sshserver.ExitStatus) {
 		onExit(exitStatus)

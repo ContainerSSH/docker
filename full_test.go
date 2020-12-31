@@ -1,9 +1,15 @@
 package docker_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/containerssh/geoip"
@@ -19,44 +25,112 @@ import (
 )
 
 func TestFullSSHServer(t *testing.T) {
-	lifecycle, listen, err := createSSHServer()
+	t.Parallel()
+
+	lock := &sync.Mutex{}
+	for _, mode := range []docker.ExecutionMode{
+		docker.ExecutionModeConnection,
+		docker.ExecutionModeSession,
+	} {
+		t.Run(fmt.Sprintf("mode=%s", mode), func(t *testing.T) {
+			lock.Lock()
+			defer lock.Unlock()
+
+			lifecycle, listen, err := createSSHServer(mode)
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer lifecycle.Stop(context.Background())
+
+			running := make(chan struct{})
+			lifecycle.OnRunning(
+				func(s service.Service, l service.Lifecycle) {
+					running <- struct{}{}
+				},
+			)
+			go func() {
+				_ = lifecycle.Run()
+			}()
+			<-running
+
+			clientConfig := ssh.ClientConfig{
+				User:            "test",
+				Auth:            []ssh.AuthMethod{ssh.Password("")},
+				HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			}
+			sshConnection, err := ssh.Dial("tcp", listen, &clientConfig)
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer func() {
+				_ = sshConnection.Close()
+			}()
+			testCommandExecution(t, sshConnection)
+			testShell(t, sshConnection)
+		})
+	}
+}
+
+func testShell(t *testing.T, sshConnection *ssh.Client) {
+	session, err := sshConnection.NewSession()
 	if !assert.NoError(t, err) {
 		return
 	}
-
-	running := make(chan struct{})
-	lifecycle.OnRunning(
-		func(s service.Service, l service.Lifecycle) {
-			running <- struct{}{}
-		},
-	)
-	go func() {
-		_ = lifecycle.Run()
+	defer func() {
+		_ = session.Close()
 	}()
-	<-running
-	defer lifecycle.Stop(context.Background())
 
-	clientConfig := ssh.ClientConfig{
-		User:            "test",
-		Auth:            []ssh.AuthMethod{ssh.Password("")},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-	sshConnection, err := ssh.Dial("tcp", listen, &clientConfig)
+	stdin, err := session.StdinPipe()
 	if !assert.NoError(t, err) {
 		return
 	}
+	stdout, err := session.StdoutPipe()
+	if !assert.NoError(t, err) {
+		return
+	}
+	_, err = session.StderrPipe()
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.NoError(t, session.Setenv("MESSAGE", "Hello world!"))
+	assert.NoError(t, session.RequestPty("xterm", 30, 120, ssh.TerminalModes{}))
+	assert.NoError(t, session.Shell())
+
+	output := bytes.Buffer{}
+
+	_, err = stdin.Write([]byte("echo \"$MESSAGE\" && echo \"COLS:$(tput cols)\" && echo \"ROWS:$(tput lines)\" && exit\n"))
+	assert.NoError(t, err)
+	for {
+		buf := make([]byte, 1024)
+		n, err := stdout.Read(buf)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			assert.NoError(t, err)
+		}
+		output.Write(buf[:n])
+	}
+	_ = stdin.Close()
+	outputString := output.String()
+	assert.True(t, strings.Contains(outputString, "Hello world!\r\n"))
+	assert.True(t, strings.Contains(outputString, "COLS:120\r\n"))
+	assert.True(t, strings.Contains(outputString, "ROWS:30\r\n"))
+	assert.NoError(t, session.Wait())
+}
+
+func testCommandExecution(t *testing.T, sshConnection *ssh.Client) {
 	session, err := sshConnection.NewSession()
 	if !assert.NoError(t, err) {
 		return
 	}
 	output, err := session.CombinedOutput("echo \"Hello world!\"")
-	if !assert.NoError(t, err) {
-		return
-	}
+	assert.NoError(t, err)
 	assert.Equal(t, []byte("Hello world!\n"), output)
+	_ = session.Close()
 }
 
-func createSSHServer() (service.Lifecycle, string, error) {
+func createSSHServer(mode docker.ExecutionMode) (service.Lifecycle, string, error) {
 	logger, err := log.New(
 		log.Config{
 			Level:  log.LevelDebug,
@@ -85,6 +159,7 @@ func createSSHServer() (service.Lifecycle, string, error) {
 	srv, err := sshserver.New(
 		config,
 		&fullHandler{
+			mode,
 			logger,
 			metricsCollector.MustCreateCounter("backend_requests", "", ""),
 			metricsCollector.MustCreateCounter("backend_errors", "", ""),
@@ -100,6 +175,7 @@ func createSSHServer() (service.Lifecycle, string, error) {
 }
 
 type fullHandler struct {
+	mode           docker.ExecutionMode
 	logger         log.Logger
 	requestsMetric metrics.SimpleCounter
 	errorsMetric   metrics.SimpleCounter
@@ -117,6 +193,8 @@ func (f *fullHandler) OnNetworkConnection(client net.TCPAddr, connectionID strin
 ) {
 	config := docker.Config{}
 	structutils.Defaults(&config)
+	config.Execution.Mode = f.mode
+	config.Connection.Host = "tcp://localhost:2375"
 
 	backend, err := docker.New(
 		client,
