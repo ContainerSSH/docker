@@ -9,7 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/containerssh/log"
@@ -289,6 +289,8 @@ loop:
 				attachResult: attachResult,
 				tty:          d.tty,
 				pid:          1,
+				doneChan:     make(chan struct{}),
+				lock:         &sync.Mutex{},
 			}, nil
 		}
 		d.backendFailuresMetric.Increment()
@@ -412,6 +414,8 @@ func (d *dockerV20Container) createExec(
 		attachResult: attachResult,
 		tty:          tty,
 		pid:          pid,
+		doneChan:     make(chan struct{}),
+		lock:         &sync.Mutex{},
 	}, nil
 }
 
@@ -430,6 +434,10 @@ loop:
 			return response.ID, nil
 		}
 		d.backendFailuresMetric.Increment()
+		if isPermanentError(lastError) {
+			d.logger.Warninge(fmt.Errorf("failed to create exec, permanent error (%w)", lastError))
+			return "", lastError
+		}
 		d.logger.Warninge(fmt.Errorf("failed to create exec, retrying in 10 seconds (%w)", lastError))
 		select {
 		case <-ctx.Done():
@@ -524,6 +532,38 @@ type dockerV20Exec struct {
 	attachResult types.HijackedResponse
 	tty          bool
 	pid          int
+	doneChan     chan struct{}
+	lock         *sync.Mutex
+}
+
+func (d *dockerV20Exec) term(ctx context.Context) {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	select {
+	case <-d.done():
+		return
+	default:
+	}
+	_ = d.signal(ctx, "TERM")
+}
+
+func (d *dockerV20Exec) kill() {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	select {
+	case <-d.done():
+		return
+	default:
+	}
+	if d.execID != "" {
+		_ = d.signal(context.Background(), "KILL")
+	} else {
+		_ = d.container.remove(context.Background())
+	}
+}
+
+func (d *dockerV20Exec) done() <-chan struct{} {
+	return d.doneChan
 }
 
 var cannotSendSignalError = errors.New("cannot send signal")
@@ -565,12 +605,14 @@ func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) err
 	stdin, stdinWriter := io.Pipe()
 	done := make(chan struct{})
 	exec.run(
-		&stdoutBytes, &stderrBytes, stdin, func(exitStatus int) {
+		stdin, &stdoutBytes, &stderrBytes, func() error {
+			return nil
+		}, func(exitStatus int) {
 			if exitStatus != 0 {
 				err = cannotSendSignalError
 				d.logger.Errorf(
 					"cannot send %s signal to container %s pid %d (%s)",
-					sig, d.container.containerID, d.pid, stderrBytes,
+					sig, d.container.containerID, d.pid, stderrBytes.Bytes(),
 				)
 			}
 			done <- struct{}{}
@@ -677,7 +719,15 @@ func (d *dockerV20Exec) readBytesFromReader(source io.Reader, bytes uint) ([]byt
 	}
 }
 
-func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader, onExit func(exitStatus int)) {
+func (d *dockerV20Exec) run(
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+	writeClose func() error,
+	onExit func(exitStatus int),
+) {
+	d.lock.Lock()
+	defer d.lock.Unlock()
 	if d.container.config.Execution.Mode == ExecutionModeConnection && !d.container.config.Execution.DisableAgent {
 		if err := d.readPIDFromStdout(stdout); err != nil {
 			d.logger.Errore(err)
@@ -685,8 +735,9 @@ func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader,
 			return
 		}
 	}
+	once := &sync.Once{}
 	go func() {
-		defer d.done(onExit)
+		defer once.Do(func() { d.finished(onExit) })
 		var err error
 		if d.tty {
 			_, err = io.Copy(stdout, d.attachResult.Reader)
@@ -698,12 +749,23 @@ func (d *dockerV20Exec) run(stdout io.Writer, stderr io.Writer, stdin io.Reader,
 				fmt.Errorf("failed to stream output (%w)", err),
 			)
 		}
+		if err := writeClose(); err != nil {
+			d.logger.Warninge(
+				fmt.Errorf("failed to close SSH channel for writing"),
+			)
+		}
 	}()
 	go func() {
+		defer once.Do(func() { d.finished(onExit) })
 		_, err := io.Copy(d.attachResult.Conn, stdin)
 		if err != nil && !errors.Is(err, io.EOF) {
 			d.logger.Warninge(
 				fmt.Errorf("failed to stream input (%w)", err),
+			)
+		}
+		if err := d.attachResult.CloseWrite(); err != nil {
+			d.logger.Warninge(
+				fmt.Errorf("failed to close Docker attach for writing"),
 			)
 		}
 	}()
@@ -761,8 +823,14 @@ func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
 	return nil
 }
 
-func (d *dockerV20Exec) done(onExit func(exitStatus int)) {
+func (d *dockerV20Exec) finished(onExit func(exitStatus int)) {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	if d.pid == -1 {
+		return
+	}
 	d.pid = -1
+	close(d.doneChan)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelFunc()
 	var lastError error
@@ -772,7 +840,9 @@ loop:
 			var inspectResult types.ContainerExecInspect
 			inspectResult, lastError = d.dockerClient.ContainerExecInspect(ctx, d.execID)
 			if lastError == nil {
-				if inspectResult.ExitCode < 0 {
+				if inspectResult.Running {
+					lastError = fmt.Errorf("program still running")
+				} else if inspectResult.ExitCode < 0 {
 					lastError = fmt.Errorf("negative exit code: %d", inspectResult.ExitCode)
 				} else {
 					onExit(inspectResult.ExitCode)
@@ -864,6 +934,5 @@ func isPermanentError(err error) bool {
 	return client.IsErrNotFound(err) ||
 		client.IsErrNotImplemented(err) ||
 		client.IsErrPluginPermissionDenied(err) ||
-		client.IsErrUnauthorized(err) ||
-		strings.Contains(err.Error(), "")
+		client.IsErrUnauthorized(err)
 }

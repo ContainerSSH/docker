@@ -40,5 +40,6 @@ func New(
 			backendFailuresMetric: backendFailuresMetric,
 			backendRequestsMetric: backendRequestsMetric,
 		},
+		done: make(chan struct{}),
 	}, nil
 }

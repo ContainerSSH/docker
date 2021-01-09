@@ -12,6 +12,8 @@ import (
 )
 
 type networkHandler struct {
+	sshserver.AbstractNetworkConnectionHandler
+
 	mutex               *sync.Mutex
 	client              net.TCPAddr
 	username            string
@@ -23,6 +25,7 @@ type networkHandler struct {
 	logger              log.Logger
 	disconnected        bool
 	labels              map[string]string
+	done                chan struct{}
 }
 
 func (n *networkHandler) OnAuthPassword(_ string, _ []byte) (response sshserver.AuthResponse, reason error) {
@@ -122,5 +125,13 @@ func (n *networkHandler) OnDisconnect() {
 	if n.container != nil {
 		_ = n.container.remove(ctx)
 		n.mutex.Unlock()
+	}
+}
+
+func (n *networkHandler) OnShutdown(shutdownContext context.Context) {
+	select {
+	case <-shutdownContext.Done():
+		n.OnDisconnect()
+	case <-n.done:
 	}
 }

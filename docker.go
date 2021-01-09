@@ -63,10 +63,11 @@ type dockerExecution interface {
 	// the signal is not known or permitted, or the process ID is not known.
 	signal(ctx context.Context, sig string) error
 	// run runs the process in question.
-	run(
-		stdout io.Writer,
-		stderr io.Writer,
-		stdin io.Reader,
-		onExit func(exitStatus int),
-	)
+	run(stdin io.Reader, stdout io.Writer, stderr io.Writer, writeClose func() error, onExit func(exitStatus int),)
+	// done returns a channel that is closed when the program exits.
+	done() <-chan struct{}
+	// term sends a TERM signal to the running process.
+	term(ctx context.Context)
+	// kill terminates the process immediately.
+	kill()
 }

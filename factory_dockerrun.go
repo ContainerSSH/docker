@@ -53,6 +53,9 @@ func NewDockerRun(
 		ContainerStart: legacyConfig.Config.Timeout,
 		ContainerStop:  legacyConfig.Config.Timeout,
 		CommandStart:   legacyConfig.Config.Timeout,
+		Signal:         legacyConfig.Config.Timeout,
+		Window:         legacyConfig.Config.Timeout,
+		HTTP:           legacyConfig.Config.Timeout,
 	}
 
 	return New(

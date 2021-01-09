@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/containerssh/sshserver"
@@ -11,6 +10,8 @@ import (
 )
 
 type channelHandler struct {
+	sshserver.AbstractSessionChannelHandler
+
 	channelID      uint64
 	networkHandler *networkHandler
 	username       string
@@ -20,11 +21,8 @@ type channelHandler struct {
 	rows           uint32
 	exitSent       bool
 	exec           dockerExecution
+	session        sshserver.SessionChannel
 }
-
-func (c *channelHandler) OnUnsupportedChannelRequest(_ uint64, _ string, _ []byte) {}
-
-func (c *channelHandler) OnFailedDecodeChannelRequest(_ uint64, _ string, _ []byte, _ error) {}
 
 func (c *channelHandler) OnEnvRequest(_ uint64, name string, value string) error {
 	c.networkHandler.mutex.Lock()
@@ -76,10 +74,6 @@ func (c *channelHandler) parseProgram(program string) []string {
 func (c *channelHandler) run(
 	ctx context.Context,
 	program []string,
-	stdin io.Reader,
-	stdout io.Writer,
-	stderr io.Writer,
-	onExit func(exitStatus sshserver.ExitStatus),
 ) error {
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
@@ -88,31 +82,26 @@ func (c *channelHandler) run(
 	}
 
 	var err error
-	var realOnExit func(exitStatus sshserver.ExitStatus)
 	switch c.networkHandler.config.Execution.Mode {
 	case ExecutionModeConnection:
-		realOnExit, err = c.handleExecModeConnection(ctx, program, onExit)
-		if err != nil {
-			return err
-		}
+		err = c.handleExecModeConnection(ctx, program)
 	case ExecutionModeSession:
-		realOnExit, err = c.handleExecModeSession(ctx, program, onExit)
-		if err != nil {
-			return err
-		}
+		err = c.handleExecModeSession(ctx, program)
 	default:
 		return fmt.Errorf("invalid execution mode: %s", c.networkHandler.config.Execution.Mode)
 	}
+	if err != nil {
+		return err
+	}
 
 	go c.exec.run(
-		stdout, stderr, stdin, func(exitStatus int) {
-			c.networkHandler.mutex.Lock()
-			defer c.networkHandler.mutex.Unlock()
-			if c.exitSent {
-				return
-			}
-			c.exitSent = true
-			realOnExit(sshserver.ExitStatus(exitStatus))
+		c.session.Stdin(),
+		c.session.Stdout(),
+		c.session.Stderr(),
+		c.session.CloseWrite,
+		func(exitStatus int) {
+			c.session.ExitStatus(uint32(exitStatus))
+			_ = c.session.Close()
 		},
 	)
 
@@ -122,24 +111,22 @@ func (c *channelHandler) run(
 func (c *channelHandler) handleExecModeConnection(
 	ctx context.Context,
 	program []string,
-	onExit func(exitStatus sshserver.ExitStatus),
-) (func(exitStatus sshserver.ExitStatus), error) {
+) error {
 	exec, err := c.networkHandler.container.createExec(ctx, program, c.env, c.pty)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	c.exec = exec
 	if c.pty {
 		_ = c.exec.resize(ctx, uint(c.rows), uint(c.columns))
 	}
-	return onExit, nil
+	return nil
 }
 
 func (c *channelHandler) handleExecModeSession(
 	ctx context.Context,
 	program []string,
-	onExit func(exitStatus sshserver.ExitStatus),
-) (func(exitStatus sshserver.ExitStatus), error) {
+) error {
 	cnt, err := c.networkHandler.dockerClient.createContainer(
 		ctx,
 		c.networkHandler.labels,
@@ -148,7 +135,7 @@ func (c *channelHandler) handleExecModeSession(
 		program,
 	)
 	if err != nil {
-		return nil, err
+		return  err
 	}
 	removeContainer := func() {
 		ctx, cancelFunc := context.WithTimeout(
@@ -160,53 +147,44 @@ func (c *channelHandler) handleExecModeSession(
 	c.exec, err = cnt.attach(ctx)
 	if err != nil {
 		removeContainer()
-		return nil, err
+		return err
 	}
 	if err := cnt.start(ctx); err != nil {
 		removeContainer()
-		return nil, err
+		return err
 	}
 	if c.pty {
 		err := c.exec.resize(ctx, uint(c.rows), uint(c.columns))
 		if err != nil {
 			removeContainer()
-			return nil, err
+			return err
 		}
 	}
-	onExitWrapper := func(exitStatus sshserver.ExitStatus) {
-		onExit(exitStatus)
-		removeContainer()
-	}
-	return onExitWrapper, nil
+	return nil
 }
 
 func (c *channelHandler) OnExecRequest(
 	_ uint64,
 	program string,
-	stdin io.Reader,
-	stdout io.Writer,
-	stderr io.Writer,
-	onExit func(exitStatus sshserver.ExitStatus),
 ) error {
 	if c.networkHandler.config.Execution.disableCommand {
 		return fmt.Errorf("command execution is disabled")
 	}
 	startContext, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.CommandStart)
 	defer cancelFunc()
-	return c.run(startContext, c.parseProgram(program), stdin, stdout, stderr, onExit)
+	return c.run(
+		startContext,
+		c.parseProgram(program),
+	)
 }
 
 func (c *channelHandler) OnShell(
 	_ uint64,
-	stdin io.Reader,
-	stdout io.Writer,
-	stderr io.Writer,
-	onExit func(exitStatus sshserver.ExitStatus),
 ) error {
 	startContext, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.CommandStart)
 	defer cancelFunc()
 
-	return c.run(startContext, c.getDefaultShell(), stdin, stdout, stderr, onExit)
+	return c.run(startContext, c.getDefaultShell())
 }
 
 func (c *channelHandler) getDefaultShell() []string {
@@ -216,16 +194,12 @@ func (c *channelHandler) getDefaultShell() []string {
 func (c *channelHandler) OnSubsystem(
 	_ uint64,
 	subsystem string,
-	stdin io.Reader,
-	stdout io.Writer,
-	stderr io.Writer,
-	onExit func(exitStatus sshserver.ExitStatus),
 ) error {
 	startContext, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.CommandStart)
 	defer cancelFunc()
 
 	if binary, ok := c.networkHandler.config.Execution.Subsystems[subsystem]; ok {
-		return c.run(startContext, []string{binary}, stdin, stdout, stderr, onExit)
+		return c.run(startContext, []string{binary})
 	}
 	return fmt.Errorf("subsystem not supported")
 }
@@ -254,4 +228,23 @@ func (c *channelHandler) OnWindow(_ uint64, columns uint32, rows uint32, _ uint3
 	defer cancelFunc()
 
 	return c.exec.resize(ctx, uint(rows), uint(columns))
+}
+
+func (c *channelHandler) OnClose() {
+	if c.exec != nil {
+		c.exec.kill()
+	}
+}
+
+func (c *channelHandler) OnShutdown(shutdownContext context.Context) {
+	if c.exec != nil {
+		c.exec.term(shutdownContext)
+		// We wait for the program to exit. This is not needed in session or connection mode, but
+		// later we will need to support persistent containers.
+		select {
+		case <-shutdownContext.Done():
+			c.exec.kill()
+		case <-c.exec.done():
+		}
+	}
 }

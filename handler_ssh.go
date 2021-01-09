@@ -5,6 +5,8 @@ import (
 )
 
 type sshConnectionHandler struct {
+	sshserver.AbstractSSHConnectionHandler
+
 	networkHandler *networkHandler
 	username       string
 }
@@ -16,6 +18,7 @@ func (s *sshConnectionHandler) OnUnsupportedChannel(_ uint64, _ string, _ []byte
 func (s *sshConnectionHandler) OnSessionChannel(
 	channelID uint64,
 	_ []byte,
+	session sshserver.SessionChannel,
 ) (
 	channel sshserver.SessionChannelHandler,
 	failureReason sshserver.ChannelRejection,
@@ -26,5 +29,6 @@ func (s *sshConnectionHandler) OnSessionChannel(
 		username:       s.username,
 		exitSent:       false,
 		env:            map[string]string{},
+		session:        session,
 	}, nil
 }
