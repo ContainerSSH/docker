@@ -94,14 +94,16 @@ func (c *channelHandler) run(
 		return err
 	}
 
-	go c.exec.run(
+	c.exec.run(
 		c.session.Stdin(),
 		c.session.Stdout(),
 		c.session.Stderr(),
 		c.session.CloseWrite,
 		func(exitStatus int) {
 			c.session.ExitStatus(uint32(exitStatus))
-			_ = c.session.Close()
+			if err := c.session.Close(); err != nil {
+				c.networkHandler.logger.Debugf("failed to close session (%v)", err)
+			}
 		},
 	)
 
@@ -135,7 +137,7 @@ func (c *channelHandler) handleExecModeSession(
 		program,
 	)
 	if err != nil {
-		return  err
+		return err
 	}
 	removeContainer := func() {
 		ctx, cancelFunc := context.WithTimeout(
@@ -233,6 +235,12 @@ func (c *channelHandler) OnWindow(_ uint64, columns uint32, rows uint32, _ uint3
 func (c *channelHandler) OnClose() {
 	if c.exec != nil {
 		c.exec.kill()
+	}
+	container := c.networkHandler.container
+	if container != nil && c.networkHandler.config.Execution.Mode == ExecutionModeSession {
+		ctx, cancel := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.ContainerStop)
+		defer cancel()
+		_ = container.remove(ctx)
 	}
 }
 

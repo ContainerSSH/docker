@@ -557,8 +557,6 @@ func (d *dockerV20Exec) kill() {
 	}
 	if d.execID != "" {
 		_ = d.signal(context.Background(), "KILL")
-	} else {
-		_ = d.container.remove(context.Background())
 	}
 }
 

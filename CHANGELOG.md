@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.8: Conformance tests
+
+This release makes use of the comprehensive conformance test introduced in [sshserver](https://github.com/containerssh/sshserver) and fixes a number of issues found in the process.
+
 ## 0.9.7: Regression bugfix
 
 This release fixes a regression where non-TTY connections would not be handled correctly when running in `connection` mode.
