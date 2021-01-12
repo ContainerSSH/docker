@@ -835,37 +835,17 @@ func (d *dockerV20Exec) finished(onExit func(exitStatus int)) {
 loop:
 	for {
 		if d.execID != "" {
-			var inspectResult types.ContainerExecInspect
-			inspectResult, lastError = d.dockerClient.ContainerExecInspect(ctx, d.execID)
-			if lastError == nil {
-				if inspectResult.Running {
-					lastError = fmt.Errorf("program still running")
-				} else if inspectResult.ExitCode < 0 {
-					lastError = fmt.Errorf("negative exit code: %d", inspectResult.ExitCode)
-				} else {
-					onExit(inspectResult.ExitCode)
-					return
-				}
+			if lastError = d.execInspect(ctx, onExit); lastError == nil {
+				return
 			}
 		} else {
-			var inspectResult types.ContainerJSON
 			if err := d.stopContainer(ctx); err != nil {
 				onExit(137)
 				return
 			}
 
-			inspectResult, lastError = d.dockerClient.ContainerInspect(ctx, d.container.containerID)
-			if lastError == nil {
-				if inspectResult.State.Running {
-					lastError = fmt.Errorf("container still running")
-				} else if inspectResult.State.Restarting {
-					lastError = fmt.Errorf("container restarting")
-				} else if inspectResult.State.ExitCode < 0 {
-					lastError = fmt.Errorf("negative exit code: %d", inspectResult.State.ExitCode)
-				} else {
-					onExit(inspectResult.State.ExitCode)
-					return
-				}
+			if lastError = d.containerInspect(ctx, onExit); lastError == nil {
+				return
 			}
 		}
 		if isPermanentError(lastError) {
@@ -887,6 +867,44 @@ loop:
 	}
 	err := fmt.Errorf("failed to fetch container exit code, giving up (%w)", lastError)
 	d.logger.Errore(err)
+}
+
+func (d *dockerV20Exec) containerInspect(
+	ctx context.Context,
+	onExit func(exitStatus int),
+) (lastError error) {
+	var inspectResult types.ContainerJSON
+
+	inspectResult, lastError = d.dockerClient.ContainerInspect(ctx, d.container.containerID)
+	if lastError == nil {
+		if inspectResult.State.Running {
+			lastError = fmt.Errorf("container still running")
+		} else if inspectResult.State.Restarting {
+			lastError = fmt.Errorf("container restarting")
+		} else if inspectResult.State.ExitCode < 0 {
+			lastError = fmt.Errorf("negative exit code: %d", inspectResult.State.ExitCode)
+		} else {
+			onExit(inspectResult.State.ExitCode)
+			return nil
+		}
+	}
+	return lastError
+}
+
+func (d *dockerV20Exec) execInspect(ctx context.Context, onExit func(exitStatus int)) (lastError error) {
+	var inspectResult types.ContainerExecInspect
+	inspectResult, lastError = d.dockerClient.ContainerExecInspect(ctx, d.execID)
+	if lastError == nil {
+		if inspectResult.Running {
+			lastError = fmt.Errorf("program still running")
+		} else if inspectResult.ExitCode < 0 {
+			lastError = fmt.Errorf("negative exit code: %d", inspectResult.ExitCode)
+		} else {
+			onExit(inspectResult.ExitCode)
+			return nil
+		}
+	}
+	return lastError
 }
 
 func (d *dockerV20Exec) stopContainer(ctx context.Context) error {
