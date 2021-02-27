@@ -46,7 +46,7 @@ func (f *dockerV20ClientFactory) getDockerClient(ctx context.Context, config Con
 
 func (f *dockerV20ClientFactory) get(ctx context.Context, config Config, logger log.Logger) (dockerClient, error) {
 	if config.Execution.Launch.ContainerConfig == nil || config.Execution.Launch.ContainerConfig.Image == "" {
-		return nil, fmt.Errorf("no image name specified")
+		return nil, log.NewMessage(EConfigError, "no image name specified")
 	}
 
 	dockerClient, err := f.getDockerClient(ctx, config)
@@ -81,9 +81,7 @@ func (d *dockerV20Client) getImageName() string {
 
 func (d *dockerV20Client) hasImage(ctx context.Context) (bool, error) {
 	image := d.config.Execution.Launch.ContainerConfig.Image
-	d.logger.Debugf(
-		"Checking if image %s exists locally...", image,
-	)
+	d.logger.Debug(log.NewMessage(MImageList, "Checking if image %s exists locally...", image))
 	var lastError error
 loop:
 	for {
@@ -94,9 +92,7 @@ loop:
 				return false, nil
 			}
 			d.backendFailuresMetric.Increment()
-			d.logger.Warninge(
-				fmt.Errorf("failed to list images, retrying in 10 seconds (%w)", lastError),
-			)
+			d.logger.Notice(log.Wrap(lastError, EFailedImageList, "failed to list images, retrying in 10 seconds"))
 		} else {
 			return true, nil
 		}
@@ -106,11 +102,7 @@ loop:
 		case <-time.After(10 * time.Second):
 		}
 	}
-	d.logger.Errore(
-		fmt.Errorf("failed to list images, giving up (%w)", lastError),
-	)
-
-	return false, lastError
+	return false, log.Wrap(lastError, EFailedImageList, "failed to list images, giving up")
 }
 
 func (d *dockerV20Client) pullImage(ctx context.Context) error {
@@ -119,9 +111,7 @@ func (d *dockerV20Client) pullImage(ctx context.Context) error {
 		return err
 	}
 
-	d.logger.Debugf(
-		"Pulling image %s...", image,
-	)
+	d.logger.Debug(log.NewMessage(MImagePull, "Pulling image %s...", image))
 	var lastError error
 loop:
 	for {
@@ -141,9 +131,12 @@ loop:
 		if pullReader != nil {
 			_ = pullReader.Close()
 		}
-		d.logger.Warninge(
-			fmt.Errorf("failed to pull image %s, retrying in 10 seconds (%w)", image, lastError),
-		)
+		d.logger.Notice(log.Wrap(
+			lastError,
+			EFailedImagePull,
+			"failed to pull image %s, retrying in 10 seconds",
+			image,
+		))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -153,10 +146,14 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err = fmt.Errorf("failed to pull image %s, giving up (%w)", image, lastError)
-	d.logger.Errore(
-		err,
+	err = log.WrapUser(
+		lastError,
+		EFailedImagePull,
+		UserMessageInitializeSSHSession,
+		"failed to pull image %s, retrying in 10 seconds",
+		image,
 	)
+	d.logger.Debug(err)
 	return err
 }
 
@@ -167,9 +164,8 @@ func (d *dockerV20Client) createContainer(
 	tty *bool,
 	cmd []string,
 ) (dockerContainer, error) {
-	d.logger.Debugf(
-		"Creating container...",
-	)
+	logger := d.logger
+	logger.Debug(log.NewMessage(MContainerCreate, "Creating container..."))
 	containerConfig := d.config.Execution.Launch.ContainerConfig
 	newConfig, err := d.createConfig(containerConfig, labels, env, tty, cmd)
 	if err != nil {
@@ -194,14 +190,17 @@ loop:
 				config:                d.config,
 				containerID:           body.ID,
 				dockerClient:          d.dockerClient,
-				logger:                d.logger,
+				logger:                logger.WithLabel("containerId", body.ID),
 				tty:                   newConfig.Tty,
 				backendRequestsMetric: d.backendRequestsMetric,
 				backendFailuresMetric: d.backendFailuresMetric,
+				lock:                  &sync.Mutex{},
+				wg:                    &sync.WaitGroup{},
+				removeLock:            &sync.Mutex{},
 			}, nil
 		}
 		d.backendFailuresMetric.Increment()
-		d.logger.Warninge(fmt.Errorf("failed to create container, retrying in 10 seconds (%w)", lastError))
+		logger.Debug(log.Wrap(lastError, EFailedContainerCreate, "failed to create container, retrying in 10 seconds"))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -211,8 +210,13 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err = fmt.Errorf("failed to create container, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err = log.WrapUser(
+		lastError,
+		EFailedContainerCreate,
+		UserMessageInitializeSSHSession,
+		"failed to create container, giving up",
+	)
+	logger.Error(err)
 	return nil, err
 }
 
@@ -258,12 +262,15 @@ type dockerV20Container struct {
 	tty                   bool
 	backendRequestsMetric metrics.SimpleCounter
 	backendFailuresMetric metrics.SimpleCounter
+	lock                  *sync.Mutex
+	wg                    *sync.WaitGroup
+	shuttingDown          bool
+	shutdown              bool
+	removeLock            *sync.Mutex
 }
 
 func (d *dockerV20Container) attach(ctx context.Context) (dockerExecution, error) {
-	d.logger.Debugf(
-		"Attaching to container...",
-	)
+	d.logger.Debug(log.NewMessage(MContainerAttach, "attaching to container..."))
 	var attachResult types.HijackedResponse
 	var lastError error
 loop:
@@ -294,7 +301,7 @@ loop:
 			}, nil
 		}
 		d.backendFailuresMetric.Increment()
-		d.logger.Warninge(fmt.Errorf("failed to attach to exec, retrying in 10 seconds (%w)", lastError))
+		d.logger.Warning(log.Wrap(lastError, EFailedContainerAttach, "failed to attach to exec, retrying in 10 seconds"))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -304,15 +311,18 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to attach to exec, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.WrapUser(
+		lastError,
+		EFailedContainerAttach,
+		UserMessageInitializeSSHSession,
+		"failed to attach to exec, giving up",
+	)
+	d.logger.Error(err)
 	return nil, err
 }
 
 func (d *dockerV20Container) start(ctx context.Context) error {
-	d.logger.Debugf(
-		"Starting container...",
-	)
+	d.logger.Debug(log.NewMessage(MContainerStart, "Starting container..."))
 	var lastError error
 loop:
 	for {
@@ -326,7 +336,7 @@ loop:
 			return nil
 		}
 		d.backendFailuresMetric.Increment()
-		d.logger.Warninge(fmt.Errorf("failed to start container, retrying in 10 seconds (%w)", lastError))
+		d.logger.Debug(log.Wrap(lastError, EFailedContainerStart, "failed to start container, retrying in 10 seconds"))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -336,15 +346,32 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to start container, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.WrapUser(
+		lastError,
+		EFailedContainerStart,
+		UserMessageInitializeSSHSession,
+		"failed to start container, giving up",
+	)
+	d.logger.Error(err)
 	return err
 }
 
 func (d *dockerV20Container) remove(ctx context.Context) error {
-	d.logger.Debugf(
-		"Removing container...",
-	)
+	d.removeLock.Lock()
+	if d.shuttingDown {
+		return nil
+	}
+	defer d.removeLock.Unlock()
+
+	d.lock.Lock()
+	d.shuttingDown = true
+	d.lock.Unlock()
+	d.wg.Wait()
+	d.lock.Lock()
+	d.shutdown = true
+	d.lock.Unlock()
+
+	d.logger.Debug(log.NewMessage(MContainerRemove, "Removing container..."))
 	var lastError error
 loop:
 	for {
@@ -362,13 +389,16 @@ loop:
 				},
 			)
 			if lastError == nil {
+				d.logger.Debug(log.NewMessage(MContainerRemoveSuccessful, "Container removed."))
 				return nil
 			}
 		}
 		d.backendFailuresMetric.Increment()
-		d.logger.Warninge(
-			fmt.Errorf("failed to remove container on disconnect, retrying in 10 seconds (%w)", lastError),
-		)
+		d.logger.Debug(log.Wrap(
+			lastError,
+			EFailedContainerRemove,
+			"failed to remove container on disconnect, retrying in 10 seconds",
+		))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -378,8 +408,12 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to remove container on disconnect, giving up (%w)", lastError)
-	d.logger.Errore(
+	err := log.Wrap(
+		lastError,
+		EFailedContainerRemove,
+		"failed to remove container on disconnect, giving up",
+	)
+	d.logger.Debug(
 		err,
 	)
 	return err
@@ -391,17 +425,37 @@ func (d *dockerV20Container) createExec(
 	env map[string]string,
 	tty bool,
 ) (dockerExecution, error) {
-	d.logger.Debugf(
-		"Creating exec...",
-	)
+	d.lock.Lock()
+	if d.shuttingDown {
+		return nil, log.UserMessage(
+			EShuttingDown,
+			"Server is shutting down",
+			"Refusing new Docker execution because the container is shutting down.",
+		)
+	}
+	d.wg.Add(1)
+	d.lock.Unlock()
+
+	return d.lockedCreateExec(ctx, program, env, tty)
+}
+
+func (d *dockerV20Container) lockedCreateExec(
+	ctx context.Context,
+	program []string,
+	env map[string]string,
+	tty bool,
+) (dockerExecution, error) {
+	d.logger.Debug(log.NewMessage(MExec, "Creating and attaching to container exec..."))
 	execConfig := d.createExecConfig(env, tty, program)
 	execID, err := d.realCreateExec(ctx, execConfig)
 	if err != nil {
+		d.wg.Done()
 		return nil, err
 	}
 
 	attachResult, err := d.attachExec(ctx, execID, execConfig)
 	if err != nil {
+		d.wg.Done()
 		return nil, err
 	}
 
@@ -420,6 +474,7 @@ func (d *dockerV20Container) createExec(
 }
 
 func (d *dockerV20Container) realCreateExec(ctx context.Context, execConfig types.ExecConfig) (string, error) {
+	d.logger.Debug(log.NewMessage(MExecCreate, "Creating exec..."))
 	var lastError error
 loop:
 	for {
@@ -435,10 +490,9 @@ loop:
 		}
 		d.backendFailuresMetric.Increment()
 		if isPermanentError(lastError) {
-			d.logger.Warninge(fmt.Errorf("failed to create exec, permanent error (%w)", lastError))
-			return "", lastError
+			return "", log.Wrap(lastError, EFailedExecCreate, "failed to create exec, permanent error")
 		}
-		d.logger.Warninge(fmt.Errorf("failed to create exec, retrying in 10 seconds (%w)", lastError))
+		d.logger.Debug(log.Wrap(lastError, EFailedExecCreate, "failed to create exec, retrying in 10 seconds"))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -448,8 +502,8 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to create exec, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.Wrap(lastError, EFailedExecCreate, "failed to create exec, giving up")
+	d.logger.Error(err)
 	return "", err
 }
 
@@ -484,9 +538,7 @@ func createEnv(env map[string]string) []string {
 }
 
 func (d *dockerV20Container) attachExec(ctx context.Context, execID string, config types.ExecConfig) (types.HijackedResponse, error) {
-	d.logger.Debugf(
-		"Attaching exec...",
-	)
+	d.logger.Debug(log.NewMessage(MExecAttach, "Attaching exec..."))
 	var attachResult types.HijackedResponse
 	var lastError error
 loop:
@@ -505,11 +557,11 @@ loop:
 		}
 		d.backendFailuresMetric.Increment()
 		if isPermanentError(lastError) {
-			err := fmt.Errorf("failed to attach to exec, permanent error (%w)", lastError)
-			d.logger.Errore(err)
+			err := log.Wrap(lastError, EFailedExecAttach, "failed to attach to exec, permanent error")
+			d.logger.Debug(err)
 			return types.HijackedResponse{}, err
 		}
-		d.logger.Warninge(fmt.Errorf("failed to attach to exec, retrying in 10 seconds (%w)", lastError))
+		d.logger.Debug(log.Wrap(lastError, EFailedExecAttach, "failed to attach to exec, retrying in 10 seconds"))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -519,8 +571,8 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to attach to exec, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.Wrap(lastError, EFailedExecAttach, "failed to attach to exec, giving up")
+	d.logger.Debug(err)
 	return types.HijackedResponse{}, err
 }
 
@@ -537,8 +589,6 @@ type dockerV20Exec struct {
 }
 
 func (d *dockerV20Exec) term(ctx context.Context) {
-	d.lock.Lock()
-	defer d.lock.Unlock()
 	select {
 	case <-d.done():
 		return
@@ -548,8 +598,6 @@ func (d *dockerV20Exec) term(ctx context.Context) {
 }
 
 func (d *dockerV20Exec) kill() {
-	d.lock.Lock()
-	defer d.lock.Unlock()
 	select {
 	case <-d.done():
 		return
@@ -568,7 +616,7 @@ var cannotSendSignalError = errors.New("cannot send signal")
 
 func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
 	if d.pid <= 0 {
-		return cannotSendSignalError
+		return log.UserMessage(EFailedSignalNoPID, "Cannot send signal to process", "could not send signal to exec, process ID not found")
 	}
 	if d.pid == 1 {
 		return d.sendSignalToContainer(ctx, sig)
@@ -578,24 +626,54 @@ func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
 
 func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) error {
 	if d.container.config.Execution.DisableAgent {
-		return fmt.Errorf("cannot send signal")
+		return log.UserMessage(
+			ECannotSendSignalNoAgent,
+			"Cannot send signal to process.",
+			"cannot send signal %s to process because the ContainerSSH agent is disabled",
+			sig,
+		).Label("signal", sig)
 	}
-	d.logger.Debugf("Using the exec facility to send signal %s to pid %d...", sig, d.pid)
-	exec, err := d.container.createExec(
+	d.lock.Lock()
+	if d.container.shutdown {
+		d.logger.Debug(log.NewMessage(
+			EFailedExecSignal,
+			"Not sending signal to process, container is already shutting down.",
+		).Label("signal", sig))
+		return nil
+	}
+	d.container.wg.Add(1)
+	pid := d.pid
+	d.lock.Unlock()
+	if pid < 1 {
+		d.logger.Debug(log.NewMessage(
+			EFailedExecSignal,
+			"No process ID recorded, not sending signal.",
+		).Label("signal", sig))
+		return nil
+	}
+	d.logger.Debug(log.NewMessage(
+		MExecSignal,
+		"Using the exec facility to send signal %s to pid %d...",
+		sig,
+		d.pid,
+	).Label("signal", sig))
+	exec, err := d.container.lockedCreateExec(
 		ctx, []string{
 			d.container.config.Execution.AgentPath,
 			"signal",
 			"--pid",
-			strconv.Itoa(d.pid),
+			strconv.Itoa(pid),
 			"--signal",
 			sig,
 		}, map[string]string{}, false,
 	)
 	if err != nil {
-		d.logger.Errorf(
-			"cannot send %s signal to container %s pid %d (%v)",
-			sig, d.container.containerID, d.pid, err,
-		)
+		d.logger.Debug(log.Wrap(
+			err,
+			EFailedExecSignal,
+			"Cannot send %s signal to container %s pid %d",
+			sig, d.container.containerID, pid,
+		).Label("signal", sig))
 		return cannotSendSignalError
 	}
 	var stdoutBytes bytes.Buffer
@@ -607,21 +685,32 @@ func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) err
 			return nil
 		}, func(exitStatus int) {
 			if exitStatus != 0 {
-				err = cannotSendSignalError
-				d.logger.Errorf(
-					"cannot send %s signal to container %s pid %d (%s)",
-					sig, d.container.containerID, d.pid, stderrBytes.Bytes(),
-				)
+				d.logger.Debug(log.Wrap(
+					err,
+					EFailedExecSignal,
+					"Cannot send %s signal to container %s pid %d",
+					sig, d.container.containerID, pid,
+				).Label("signal", sig))
 			}
 			done <- struct{}{}
 		},
 	)
 	<-done
 	_ = stdinWriter.Close()
+	d.logger.Debug(log.NewMessage(
+		MExecSignalSuccessful,
+		"Sent %s signal to container %s pid %d",
+		sig, d.container.containerID, pid,
+	).Label("signal", sig))
 	return err
 }
 
 func (d *dockerV20Exec) sendSignalToContainer(ctx context.Context, sig string) error {
+	d.logger.Debug(log.NewMessage(
+		MContainerSignal,
+		"Sending the %s signal to container...",
+		sig,
+	).Label("signal", sig))
 	var lastError error
 loop:
 	for {
@@ -630,18 +719,25 @@ loop:
 			return nil
 		}
 		if isPermanentError(lastError) {
-			err := fmt.Errorf(
-				"cannot send %s signal to container %s, permanent error (%w)",
-				sig, d.container.containerID, lastError,
-			)
-			d.logger.Errore(err)
+			err := log.WrapUser(
+				lastError,
+				EFailedContainerSignal,
+				"Cannot send signal to process.",
+				"Cannot send %s signal to container %s, permanent error",
+				sig,
+				d.container.containerID,
+			).Label("signal", sig)
+			d.logger.Debug(err)
 			return err
 		}
-		d.logger.Warninge(
-			fmt.Errorf(
-				"cannot send %s signal to container %s, retrying in 10 seconds (%w)",
-				sig, d.container.containerID, lastError,
-			),
+		d.logger.Debug(
+			log.Wrap(
+				lastError,
+				EFailedContainerSignal,
+				"Cannot send %s signal to container %s, retrying in 10 seconds",
+				sig,
+				d.container.containerID,
+			).Label("signal", sig),
 		)
 		select {
 		case <-ctx.Done():
@@ -652,14 +748,21 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	d.logger.Errorf("cannot send signal %s to container %s, giving up (%v)", sig, d.container.containerID, lastError)
-	return cannotSendSignalError
+	err := log.Wrap(
+		lastError,
+		EFailedContainerSignal,
+		"Cannot send %s signal to container %s, retrying in 10 seconds",
+		sig,
+		d.container.containerID,
+	).Label("signal", sig)
+	d.logger.Debug(err)
+	return err
 }
 
 func (d *dockerV20Exec) resize(ctx context.Context, height uint, width uint) error {
-	d.logger.Debugf(
-		"Resizing...",
-	)
+	d.logger.Debug(log.NewMessage(MResizing, "Resizing window to %dx%d", width, height).
+		Label("width", width).
+		Label("height", height))
 	var lastError error
 loop:
 	for {
@@ -680,12 +783,20 @@ loop:
 			return nil
 		}
 		if isPermanentError(lastError) {
-			err := fmt.Errorf("failed to resize window, permanent error (%w)", lastError)
-			// Debug level because resizes can fail for legitimate reasons, such as invalid program paths.
-			d.logger.Debuge(err)
+			err := log.WrapUser(
+				lastError,
+				EFailedResize,
+				"Cannot resize window.",
+				"cannot resize window, permanent error",
+			).Label("height", height).Label("width", width)
+			d.logger.Debug(err)
 			return err
 		}
-		d.logger.Warninge(fmt.Errorf("failed to resize window, retrying in 10 seconds (%w)", lastError))
+		d.logger.Debug(log.Wrap(
+			lastError,
+			EFailedResize,
+			"cannot resize window, permanent error",
+		).Label("height", height).Label("width", width))
 		select {
 		case <-ctx.Done():
 			break loop
@@ -695,8 +806,13 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to resize exec, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.WrapUser(
+		lastError,
+		EFailedResize,
+		"Cannot resize window.",
+		"cannot resize window, diving up",
+	).Label("height", height).Label("width", width)
+	d.logger.Debug(err)
 	return err
 }
 
@@ -728,14 +844,22 @@ func (d *dockerV20Exec) run(
 	defer d.lock.Unlock()
 	if d.container.config.Execution.Mode == ExecutionModeConnection && !d.container.config.Execution.DisableAgent {
 		if err := d.readPIDFromStdout(stdout); err != nil {
-			d.logger.Errore(err)
+			d.logger.Error(log.Wrap(
+				err,
+				EFailedPIDRead,
+				"cannot read PID from container",
+			))
 			onExit(137)
+			d.container.wg.Done()
 			return
 		}
 	}
 	once := &sync.Once{}
+	exitFunc := func() {
+		d.finished(onExit)
+	}
 	go func() {
-		defer once.Do(func() { d.finished(onExit) })
+		defer once.Do(exitFunc)
 		var err error
 		if d.tty {
 			_, err = io.Copy(stdout, d.attachResult.Reader)
@@ -743,28 +867,36 @@ func (d *dockerV20Exec) run(
 			_, err = stdcopy.StdCopy(stdout, stderr, d.attachResult.Reader)
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			d.logger.Warninge(
-				fmt.Errorf("failed to stream output (%w)", err),
-			)
+			d.logger.Error(log.Wrap(
+				err,
+				EFailedOutputStream,
+				"Cannot read PID from container",
+			))
 		}
 		if err := writeClose(); err != nil {
-			d.logger.Warninge(
-				fmt.Errorf("failed to close SSH channel for writing"),
-			)
+			d.logger.Debug(log.Wrap(
+				err,
+				EFailedOutputCloseWriting,
+				"failed to close SSH channel for writing",
+			))
 		}
 	}()
 	go func() {
-		defer once.Do(func() { d.finished(onExit) })
+		defer once.Do(exitFunc)
 		_, err := io.Copy(d.attachResult.Conn, stdin)
 		if err != nil && !errors.Is(err, io.EOF) {
-			d.logger.Warninge(
-				fmt.Errorf("failed to stream input (%w)", err),
-			)
+			d.logger.Debug(log.Wrap(
+				err,
+				EFailedInputStream,
+				"failed to stream input",
+			))
 		}
 		if err := d.attachResult.CloseWrite(); err != nil {
-			d.logger.Warninge(
-				fmt.Errorf("failed to close Docker attach for writing"),
-			)
+			d.logger.Debug(log.Wrap(
+				err,
+				EFailedInputCloseWriting,
+				"failed to close Docker attach for writing",
+			))
 		}
 	}()
 }
@@ -784,7 +916,7 @@ func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
 		var headerBuffer []byte
 		headerBuffer, err = d.readBytesFromReader(d.attachResult.Reader, 8)
 		if err != nil {
-			return fmt.Errorf("failed to read pid from ContainerSSH agent (%w)", err)
+			return log.Wrap(err, EFailedAgentRead, "failed to read from ContainerSSH agent")
 		}
 		stream := headerBuffer[0]
 		if stream > 2 {
@@ -796,7 +928,8 @@ func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
 			return fmt.Errorf("failed to read pid from ContainerSSH agent (%w)", err)
 		}
 		if frameLength < 4 {
-			return fmt.Errorf(
+			return log.NewMessage(
+				EFailedAgentRead,
 				"not enough data received (%d bytes) from Docker daemon while trying to read pid from ContainerSSH agent",
 				frameLength,
 			)
@@ -823,11 +956,15 @@ func (d *dockerV20Exec) readPIDFromStdout(stdout io.Writer) error {
 
 func (d *dockerV20Exec) finished(onExit func(exitStatus int)) {
 	d.lock.Lock()
-	defer d.lock.Unlock()
 	if d.pid == -1 {
+		d.lock.Unlock()
 		return
 	}
 	d.pid = -1
+	if d.execID != "" {
+		defer d.container.wg.Done()
+	}
+	d.lock.Unlock()
 	close(d.doneChan)
 	ctx, cancelFunc := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelFunc()
@@ -849,12 +986,12 @@ loop:
 			}
 		}
 		if isPermanentError(lastError) {
-			err := fmt.Errorf("failed to fetch exit code, permanent error (%w)", lastError)
-			d.logger.Errore(err)
+			err := log.Wrap(lastError, EFetchingExitCodeFailed, "Failed to fetch exit code, permanent error")
+			d.logger.Error(err)
 			return
 		}
-		d.logger.Warninge(
-			fmt.Errorf("failed to fetch container exit code, retrying in 10 seconds (%w)", lastError),
+		d.logger.Debug(
+			log.Wrap(lastError, EFetchingExitCodeFailed, "Failed to fetch exit code, retrying in 10 seconds"),
 		)
 		select {
 		case <-ctx.Done():
@@ -865,8 +1002,8 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to fetch container exit code, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.Wrap(lastError, EFetchingExitCodeFailed, "Failed to fetch exit code, giving up")
+	d.logger.Error(err)
 }
 
 func (d *dockerV20Exec) containerInspect(
@@ -878,11 +1015,11 @@ func (d *dockerV20Exec) containerInspect(
 	inspectResult, lastError = d.dockerClient.ContainerInspect(ctx, d.container.containerID)
 	if lastError == nil {
 		if inspectResult.State.Running {
-			lastError = fmt.Errorf("container still running")
+			lastError = log.NewMessage(EStillRunning, "container still running")
 		} else if inspectResult.State.Restarting {
-			lastError = fmt.Errorf("container restarting")
+			lastError = log.NewMessage(EContainerRestarting, "container is restarting")
 		} else if inspectResult.State.ExitCode < 0 {
-			lastError = fmt.Errorf("negative exit code: %d", inspectResult.State.ExitCode)
+			lastError = log.NewMessage(ENegativeExitCode, "negative exit code: %d", inspectResult.State.ExitCode)
 		} else {
 			onExit(inspectResult.State.ExitCode)
 			return nil
@@ -896,10 +1033,17 @@ func (d *dockerV20Exec) execInspect(ctx context.Context, onExit func(exitStatus 
 	inspectResult, lastError = d.dockerClient.ContainerExecInspect(ctx, d.execID)
 	if lastError == nil {
 		if inspectResult.Running {
-			lastError = fmt.Errorf("program still running")
+			lastError = log.NewMessage(EStillRunning, "Program still running")
 		} else if inspectResult.ExitCode < 0 {
-			lastError = fmt.Errorf("negative exit code: %d", inspectResult.ExitCode)
+			lastError = log.NewMessage(
+				ENegativeExitCode,
+				"Negative exit code: %d",
+				inspectResult.ExitCode,
+			).Label("exitCode", inspectResult.ExitCode)
 		} else {
+			err := log.NewMessage(MExitCode, "Program exited with %d", inspectResult.ExitCode)
+			d.logger.Debug(err)
+
 			onExit(inspectResult.ExitCode)
 			return nil
 		}
@@ -908,6 +1052,7 @@ func (d *dockerV20Exec) execInspect(ctx context.Context, onExit func(exitStatus 
 }
 
 func (d *dockerV20Exec) stopContainer(ctx context.Context) error {
+	d.logger.Debug(log.NewMessage(MContainerStop, "Stopping container..."))
 	var lastError error
 loop:
 	for {
@@ -918,7 +1063,6 @@ loop:
 			if inspectResult.State.Status == "stopped" {
 				return nil
 			}
-			d.logger.Debugf("Stopping container...")
 			lastError = d.dockerClient.ContainerStop(
 				ctx,
 				d.container.containerID,
@@ -929,8 +1073,8 @@ loop:
 		} else if lastError != nil {
 			d.container.backendFailuresMetric.Increment()
 		}
-		d.logger.Warninge(
-			fmt.Errorf("failed to stop container, retrying in 10 seconds (%w)", lastError),
+		d.logger.Debug(
+			log.Wrap(lastError, EContainerStopFailed, "failed to stop container, retrying in 10 seconds"),
 		)
 		select {
 		case <-ctx.Done():
@@ -941,8 +1085,8 @@ loop:
 	if lastError == nil {
 		lastError = fmt.Errorf("timeout")
 	}
-	err := fmt.Errorf("failed to stop container, giving up (%w)", lastError)
-	d.logger.Errore(err)
+	err := log.Wrap(lastError, EContainerStopFailed, "failed to stop container, giving up")
+	d.logger.Error(err)
 	return err
 }
 

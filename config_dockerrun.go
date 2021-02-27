@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/containerssh/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -13,7 +14,7 @@ import (
 //goland:noinspection GoDeprecation
 func (config DockerRunConfig) Validate() error {
 	if config.Host == "" {
-		return fmt.Errorf("empty Docker host provided")
+		return log.NewMessage(EConfigError, "empty Docker host provided")
 	}
 	if err := config.Config.Validate(); err != nil {
 		return fmt.Errorf("invalid dockerrun config (%w)", err)

@@ -1,8 +1,9 @@
 package docker
 
 import (
-	"fmt"
 	"time"
+
+	"github.com/containerssh/log"
 )
 
 func parseRawDuration(rawValue interface{}, d *time.Duration) error {
@@ -25,7 +26,7 @@ func parseRawDuration(rawValue interface{}, d *time.Duration) error {
 			return err
 		}
 	default:
-		return fmt.Errorf("invalid duration: %v", rawValue)
+		return log.NewMessage(EConfigError, "invalid duration: %v", rawValue)
 	}
 	return nil
 }

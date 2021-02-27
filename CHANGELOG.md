@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.9: Better logging, race condition fixes
+
+This release adds extensive logging as well as fixes a few non-critical race conditions that lead to confusing error messages.
+
 ## 0.9.8: Conformance tests
 
 This release makes use of the comprehensive conformance test introduced in [sshserver](https://github.com/containerssh/sshserver) and fixes a number of issues found in the process.

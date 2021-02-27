@@ -2,9 +2,12 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
+	"github.com/containerssh/log"
 	"github.com/containerssh/sshserver"
 	"github.com/containerssh/unixutils"
 )
@@ -28,7 +31,7 @@ func (c *channelHandler) OnEnvRequest(_ uint64, name string, value string) error
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec != nil {
-		return fmt.Errorf("program already running")
+		return log.UserMessage(EProgramAlreadyRunning, "program already running", "program already running")
 	}
 	c.env[name] = value
 	return nil
@@ -46,7 +49,7 @@ func (c *channelHandler) OnPtyRequest(
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec != nil {
-		return fmt.Errorf("program already running")
+		return log.UserMessage(EProgramAlreadyRunning, "program already running", "program already running")
 	}
 	c.env["TERM"] = term
 	c.rows = rows
@@ -78,7 +81,7 @@ func (c *channelHandler) run(
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec != nil {
-		return fmt.Errorf("program already running")
+		return log.UserMessage(EProgramAlreadyRunning, "program already running", "program already running")
 	}
 
 	var err error
@@ -88,7 +91,12 @@ func (c *channelHandler) run(
 	case ExecutionModeSession:
 		err = c.handleExecModeSession(ctx, program)
 	default:
-		return fmt.Errorf("invalid execution mode: %s", c.networkHandler.config.Execution.Mode)
+		err = log.UserMessage(
+			EConfigError,
+			"cannot run program",
+			"invalid execution mode: %s",
+			c.networkHandler.config.Execution.Mode,
+		)
 	}
 	if err != nil {
 		return err
@@ -101,8 +109,12 @@ func (c *channelHandler) run(
 		c.session.CloseWrite,
 		func(exitStatus int) {
 			c.session.ExitStatus(uint32(exitStatus))
-			if err := c.session.Close(); err != nil {
-				c.networkHandler.logger.Debugf("failed to close session (%v)", err)
+			if err := c.session.Close(); err != nil && !errors.Is(err, io.EOF) {
+				c.networkHandler.logger.Debug(log.Wrap(
+					err,
+					EFailedOutputCloseWriting,
+					"failed to close session",
+				))
 			}
 		},
 	)
@@ -120,7 +132,10 @@ func (c *channelHandler) handleExecModeConnection(
 	}
 	c.exec = exec
 	if c.pty {
-		_ = c.exec.resize(ctx, uint(c.rows), uint(c.columns))
+		err = c.exec.resize(ctx, uint(c.rows), uint(c.columns))
+		if err != nil {
+			c.networkHandler.logger.Debug(err)
+		}
 	}
 	return nil
 }
@@ -203,7 +218,7 @@ func (c *channelHandler) OnSubsystem(
 	if binary, ok := c.networkHandler.config.Execution.Subsystems[subsystem]; ok {
 		return c.run(startContext, []string{binary})
 	}
-	return fmt.Errorf("subsystem not supported")
+	return log.UserMessage(ESubsystemNotSupported, "subsystem not supported", "the specified subsystem is not supported (%s)", subsystem)
 }
 
 func (c *channelHandler) OnSignal(_ uint64, signal string) error {

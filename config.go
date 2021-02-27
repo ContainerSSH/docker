@@ -1,7 +1,7 @@
 package docker
 
 import (
-	"fmt"
+	"github.com/containerssh/log"
 )
 
 // Config is the base configuration structure of the DockerRun backend.
@@ -17,10 +17,10 @@ type Config struct {
 // Validate validates the provided configuration and returns an error if invalid.
 func (c Config) Validate() error {
 	if err := c.Connection.Validate(); err != nil {
-		return fmt.Errorf("invalid connection configuration (%w)", err)
+		return log.Wrap(err, EConfigError, "invalid connection configuration")
 	}
 	if err := c.Execution.Validate(); err != nil {
-		return fmt.Errorf("invalid execution configuration (%w)", err)
+		return log.Wrap(err, EConfigError, "invalid execution configuration")
 	}
 	return nil
 }

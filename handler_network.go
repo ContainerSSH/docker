@@ -44,7 +44,9 @@ func (n *networkHandler) OnHandshakeSuccess(username string) (
 ) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	ctx, cancelFunc := context.WithTimeout(context.Background(), n.config.Timeouts.ContainerStart)
+	ctx, cancelFunc := context.WithTimeout(
+		context.Background(),
+		n.config.Timeouts.ContainerStart)
 	defer cancelFunc()
 	n.username = username
 
@@ -78,22 +80,33 @@ func (n *networkHandler) OnHandshakeSuccess(username string) (
 }
 
 func (n *networkHandler) pullNeeded(ctx context.Context) (bool, error) {
+	n.logger.Debug(log.NewMessage(MImagePullNeeded, "Checking if an image pull is needed..."))
 	switch n.config.Execution.ImagePullPolicy {
 	case ImagePullPolicyNever:
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Image pull policy is \"Never\", not pulling image."))
 		return false, nil
 	case ImagePullPolicyAlways:
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Image pull policy is \"Always\", pulling image."))
 		return true, nil
 	}
 
 	image := n.dockerClient.getImageName()
 	if !strings.Contains(image, ":") || strings.HasSuffix(image, ":latest") {
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Image pull policy is \"IfNotPresent\" and the image name is \"latest\", pulling image."))
 		return true, nil
 	}
 
 	hasImage, err := n.dockerClient.hasImage(ctx)
 	if err != nil {
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Failed to determine if image is present locally, pulling image."))
 		return true, err
 	}
+	if hasImage {
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Image pull policy is \"IfNotPresent\", image present locally, not pulling image."))
+	} else {
+		n.logger.Debug(log.NewMessage(MImagePullNeeded, "Image pull policy is \"IfNotPresent\", image not present locally, pulling image."))
+	}
+
 	return !hasImage, nil
 }
 

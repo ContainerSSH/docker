@@ -1,12 +1,12 @@
 package docker
 
 import (
-	"fmt"
+	"github.com/containerssh/log"
 )
 
 func (c ConnectionConfig) Validate() error {
 	if c.Host == "" {
-		return fmt.Errorf("missing host")
+		return log.NewMessage(EConfigError, "missing host")
 	}
 	return nil
 }
