@@ -612,8 +612,6 @@ func (d *dockerV20Exec) done() <-chan struct{} {
 	return d.doneChan
 }
 
-var cannotSendSignalError = errors.New("cannot send signal")
-
 func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
 	if d.pid <= 0 {
 		return log.UserMessage(EFailedSignalNoPID, "Cannot send signal to process", "could not send signal to exec, process ID not found")
@@ -657,6 +655,29 @@ func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) err
 		sig,
 		d.pid,
 	).Label("signal", sig))
+	err := d.realSendSignal(ctx, sig, pid)
+	if err != nil {
+		d.logger.Debug(
+			log.Wrap(
+				err,
+				EFailedExecSignal,
+				"Cannot send %s signal to container %s pid %d",
+				sig, d.container.containerID, pid,
+			).Label("signal", sig),
+		)
+	} else {
+		d.logger.Debug(
+			log.NewMessage(
+				MExecSignalSuccessful,
+				"Sent %s signal to container %s pid %d",
+				sig, d.container.containerID, pid,
+			).Label("signal", sig),
+		)
+	}
+	return err
+}
+
+func (d *dockerV20Exec) realSendSignal(ctx context.Context, sig string, pid int) error {
 	exec, err := d.container.lockedCreateExec(
 		ctx, []string{
 			d.container.config.Execution.AgentPath,
@@ -668,13 +689,7 @@ func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) err
 		}, map[string]string{}, false,
 	)
 	if err != nil {
-		d.logger.Debug(log.Wrap(
-			err,
-			EFailedExecSignal,
-			"Cannot send %s signal to container %s pid %d",
-			sig, d.container.containerID, pid,
-		).Label("signal", sig))
-		return cannotSendSignalError
+		return err
 	}
 	var stdoutBytes bytes.Buffer
 	var stderrBytes bytes.Buffer
@@ -685,23 +700,13 @@ func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) err
 			return nil
 		}, func(exitStatus int) {
 			if exitStatus != 0 {
-				d.logger.Debug(log.Wrap(
-					err,
-					EFailedExecSignal,
-					"Cannot send %s signal to container %s pid %d",
-					sig, d.container.containerID, pid,
-				).Label("signal", sig))
+				err = fmt.Errorf("signal program exited with status %d", exitStatus)
 			}
 			done <- struct{}{}
 		},
 	)
 	<-done
 	_ = stdinWriter.Close()
-	d.logger.Debug(log.NewMessage(
-		MExecSignalSuccessful,
-		"Sent %s signal to container %s pid %d",
-		sig, d.container.containerID, pid,
-	).Label("signal", sig))
 	return err
 }
 
@@ -858,7 +863,43 @@ func (d *dockerV20Exec) run(
 	exitFunc := func() {
 		d.finished(onExit)
 	}
-	go func() {
+	go d.processOutput(once, exitFunc, stdout, stderr, writeClose)
+	go d.processInput(stdin, once, exitFunc)
+}
+
+func (d *dockerV20Exec) processInput(stdin io.Reader, once *sync.Once, exitFunc func()) {
+	func() {
+		defer once.Do(exitFunc)
+		_, err := io.Copy(d.attachResult.Conn, stdin)
+		if err != nil && !errors.Is(err, io.EOF) {
+			d.logger.Debug(
+				log.Wrap(
+					err,
+					EFailedInputStream,
+					"failed to stream input",
+				),
+			)
+		}
+		if err := d.attachResult.CloseWrite(); err != nil {
+			d.logger.Debug(
+				log.Wrap(
+					err,
+					EFailedInputCloseWriting,
+					"failed to close Docker attach for writing",
+				),
+			)
+		}
+	}()
+}
+
+func (d *dockerV20Exec) processOutput(
+	once *sync.Once,
+	exitFunc func(),
+	stdout io.Writer,
+	stderr io.Writer,
+	writeClose func() error,
+) {
+	func() {
 		defer once.Do(exitFunc)
 		var err error
 		if d.tty {
@@ -867,36 +908,22 @@ func (d *dockerV20Exec) run(
 			_, err = stdcopy.StdCopy(stdout, stderr, d.attachResult.Reader)
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			d.logger.Error(log.Wrap(
-				err,
-				EFailedOutputStream,
-				"Cannot read PID from container",
-			))
+			d.logger.Error(
+				log.Wrap(
+					err,
+					EFailedOutputStream,
+					"Cannot read PID from container",
+				),
+			)
 		}
 		if err := writeClose(); err != nil {
-			d.logger.Debug(log.Wrap(
-				err,
-				EFailedOutputCloseWriting,
-				"failed to close SSH channel for writing",
-			))
-		}
-	}()
-	go func() {
-		defer once.Do(exitFunc)
-		_, err := io.Copy(d.attachResult.Conn, stdin)
-		if err != nil && !errors.Is(err, io.EOF) {
-			d.logger.Debug(log.Wrap(
-				err,
-				EFailedInputStream,
-				"failed to stream input",
-			))
-		}
-		if err := d.attachResult.CloseWrite(); err != nil {
-			d.logger.Debug(log.Wrap(
-				err,
-				EFailedInputCloseWriting,
-				"failed to close Docker attach for writing",
-			))
+			d.logger.Debug(
+				log.Wrap(
+					err,
+					EFailedOutputCloseWriting,
+					"failed to close SSH channel for writing",
+				),
+			)
 		}
 	}()
 }
