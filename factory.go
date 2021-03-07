@@ -26,7 +26,7 @@ func New(
 	}
 
 	if config.Execution.DisableAgent {
-		logger.Warningf("ContainerSSH Guest Agent support is disabled. Some functions will not work.")
+		logger.Warning(log.NewMessage(EGuestAgentDisabled, "ContainerSSH Guest Agent support is disabled. Some functions will not work."))
 	}
 
 	return &networkHandler{
