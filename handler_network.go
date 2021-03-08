@@ -135,10 +135,11 @@ func (n *networkHandler) OnDisconnect() {
 	ctx, cancelFunc := context.WithTimeout(context.Background(), n.config.Timeouts.ContainerStop)
 	defer cancelFunc()
 	n.mutex.Lock()
+	defer n.mutex.Unlock()
 	if n.container != nil {
 		_ = n.container.remove(ctx)
-		n.mutex.Unlock()
 	}
+	close(n.done)
 }
 
 func (n *networkHandler) OnShutdown(shutdownContext context.Context) {

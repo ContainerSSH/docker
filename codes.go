@@ -172,3 +172,16 @@ const ESubsystemNotSupported = "DOCKER_SUBSYSTEM_NOT_SUPPORTED"
 // has towards an SSH server. We provide the ability to disable guest agent support only for cases where the guest
 // agent binary cannot be installed in the image at all.
 const EGuestAgentDisabled = "DOCKER_GUEST_AGENT_DISABLED"
+
+// This message indicates that you are still using the deprecated DockerRun backend. This backend
+// doesn't support all safety and functionality improvements and will be removed in the future. Please
+// read the [deprecation notice for a migration guide](https://containerssh.io/deprecations/dockerrun)
+const EDockerRun = "DOCKERRUN_DEPRECATED"
+
+// This message indicates that the user tried to execute a program, but program
+// execution is disabled in the legacy DockerRun configuration.
+const EProgramExecutionDisabled = "DOCKERRUN_EXEC_DISABLED"
+
+// This message indicates that the user requested an action that can only be performed when
+// a program is running, but there is currently no program running.
+const EProgramNotRunning = "DOCKER_PROGRAM_NOT_RUNNING"

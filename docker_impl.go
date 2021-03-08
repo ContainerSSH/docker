@@ -358,10 +358,10 @@ loop:
 
 func (d *dockerV20Container) remove(ctx context.Context) error {
 	d.removeLock.Lock()
+	defer d.removeLock.Unlock()
 	if d.shuttingDown {
 		return nil
 	}
-	defer d.removeLock.Unlock()
 
 	d.lock.Lock()
 	d.shuttingDown = true
@@ -624,36 +624,42 @@ func (d *dockerV20Exec) signal(ctx context.Context, sig string) error {
 
 func (d *dockerV20Exec) sendSignalToProcess(ctx context.Context, sig string) error {
 	if d.container.config.Execution.DisableAgent {
-		return log.UserMessage(
+		err := log.UserMessage(
 			ECannotSendSignalNoAgent,
 			"Cannot send signal to process.",
-			"cannot send signal %s to process because the ContainerSSH agent is disabled",
+			"Cannot send signal %s to process because the ContainerSSH agent is disabled",
 			sig,
 		).Label("signal", sig)
+		d.logger.Debug(err)
+		return err
 	}
 	d.lock.Lock()
 	if d.container.shutdown {
-		d.logger.Debug(log.NewMessage(
+		err := log.UserMessage(
 			EFailedExecSignal,
+			"Cannot send signal to process.",
 			"Not sending signal to process, container is already shutting down.",
-		).Label("signal", sig))
-		return nil
+		).Label("signal", sig)
+		d.logger.Debug(err)
+		return err
 	}
 	d.container.wg.Add(1)
 	pid := d.pid
 	d.lock.Unlock()
 	if pid < 1 {
-		d.logger.Debug(log.NewMessage(
+		err := log.UserMessage(
 			EFailedExecSignal,
+			"Cannot send signal to process.",
 			"No process ID recorded, not sending signal.",
-		).Label("signal", sig))
-		return nil
+		).Label("signal", sig)
+		d.logger.Debug(err)
+		return err
 	}
 	d.logger.Debug(log.NewMessage(
 		MExecSignal,
 		"Using the exec facility to send signal %s to pid %d...",
 		sig,
-		d.pid,
+		pid,
 	).Label("signal", sig))
 	err := d.realSendSignal(ctx, sig, pid)
 	if err != nil {

@@ -3,7 +3,6 @@ package docker
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
@@ -185,7 +184,11 @@ func (c *channelHandler) OnExecRequest(
 	program string,
 ) error {
 	if c.networkHandler.config.Execution.disableCommand {
-		return fmt.Errorf("command execution is disabled")
+		return log.UserMessage(
+			EProgramExecutionDisabled,
+			"Command execution is disabled.",
+			"Command execution is disabled.",
+		)
 	}
 	startContext, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.CommandStart)
 	defer cancelFunc()
@@ -225,7 +228,11 @@ func (c *channelHandler) OnSignal(_ uint64, signal string) error {
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec == nil {
-		return fmt.Errorf("program not running")
+		return log.UserMessage(
+			EProgramNotRunning,
+			"Cannot send signal, program is not running.",
+			"Cannot send signal, program is not running.",
+		)
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.Signal)
@@ -238,7 +245,11 @@ func (c *channelHandler) OnWindow(_ uint64, columns uint32, rows uint32, _ uint3
 	c.networkHandler.mutex.Lock()
 	defer c.networkHandler.mutex.Unlock()
 	if c.exec == nil {
-		return fmt.Errorf("program not running")
+		return log.UserMessage(
+			EProgramNotRunning,
+			"Cannot resize window, program is not running.",
+			"Cannot resize window, program is not running.",
+		)
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), c.networkHandler.config.Timeouts.Window)
