@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.11: Better JSON and YAML support
+
+Explicitly disabled internal fields in JSON or YAML.
+
 ## 0.9.10: Minor fixes
 
 This release cleans up various log messages and adds small fixes.

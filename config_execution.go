@@ -29,6 +29,7 @@ func (e ExecutionMode) Validate() error {
 }
 
 // ExecutionConfig contains the configuration of what container to run in Docker.
+//goland:noinspection GoVetStructTag
 type ExecutionConfig struct {
 	// Launch contains the Docker-specific launch configuration.
 	Launch LaunchConfig `json:",inline" yaml:",inline"`
@@ -59,7 +60,7 @@ type ExecutionConfig struct {
 
 	// disableCommand is a configuration option to support legacy command disabling from the dockerrun config.
 	// See https://containerssh.io/deprecations/dockerrun for details.
-	disableCommand bool
+	disableCommand bool `json:"-" yaml:"-"`
 }
 
 // Validate validates the docker config structure.
