@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.10: Minor fixes
+
+This release cleans up various log messages and adds small fixes.
+
 ## 0.9.9: Better logging, race condition fixes
 
 This release adds extensive logging as well as fixes a few non-critical race conditions that lead to confusing error messages.

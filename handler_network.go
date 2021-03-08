@@ -131,14 +131,18 @@ func (n *networkHandler) setupDockerClient(ctx context.Context, config Config) e
 }
 
 func (n *networkHandler) OnDisconnect() {
+	n.mutex.Lock()
+	defer n.mutex.Unlock()
+	if n.disconnected {
+		return
+	}
 	n.disconnected = true
 	ctx, cancelFunc := context.WithTimeout(context.Background(), n.config.Timeouts.ContainerStop)
 	defer cancelFunc()
-	n.mutex.Lock()
 	if n.container != nil {
 		_ = n.container.remove(ctx)
-		n.mutex.Unlock()
 	}
+	close(n.done)
 }
 
 func (n *networkHandler) OnShutdown(shutdownContext context.Context) {
