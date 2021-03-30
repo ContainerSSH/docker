@@ -45,7 +45,7 @@ type ExecutionConfig struct {
 	Mode ExecutionMode `json:"mode" yaml:"mode" default:"connection"`
 
 	// IdleCommand is the command that runs as the first process in the container in ExecutionModeConnection. Ignored in ExecutionModeSession.
-	IdleCommand []string `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/bin/sh\", \"-c\", \"sleep infinity & PID=$!; trap \\\"kill $PID\\\" INT TERM; wait\"]"`
+	IdleCommand []string `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
 	// ShellCommand is the command used for launching shells when the container is in ExecutionModeConnection. Ignored in ExecutionModeSession.
 	ShellCommand []string `json:"shellCommand" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
 	// AgentPath contains the path to the ContainerSSH Guest Agent.

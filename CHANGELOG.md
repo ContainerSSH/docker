@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.12: Moved to using the ContainerSSH agent for the init process
+
+This release moves to using the new ContainerSSH agent `wait-signal` feature as an init process instead of the bash solution.
+
 ## 0.9.11: Better JSON and YAML support
 
 Explicitly disabled internal fields in JSON or YAML.

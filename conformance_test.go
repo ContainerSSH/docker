@@ -21,6 +21,7 @@ func TestConformance(t *testing.T) {
 			//goland:noinspection GoDeprecation
 			config := docker.DockerRunConfig{}
 			structutils.Defaults(&config)
+
 			testFile, err := os.Open("testdata/config-0.3.yaml")
 			if err != nil {
 				return nil, err
@@ -36,7 +37,6 @@ func TestConformance(t *testing.T) {
 		"session": func(logger log.Logger) (sshserver.NetworkConnectionHandler, error) {
 			config := docker.Config{}
 			structutils.Defaults(&config)
-			config.Execution.ShellCommand = []string{"/bin/sh"}
 
 			config.Execution.Mode = docker.ExecutionModeSession
 			return getDocker(config, logger)
@@ -44,7 +44,6 @@ func TestConformance(t *testing.T) {
 		"connection": func(logger log.Logger) (sshserver.NetworkConnectionHandler, error) {
 			config := docker.Config{}
 			structutils.Defaults(&config)
-			config.Execution.ShellCommand = []string{"/bin/sh"}
 
 			config.Execution.Mode = docker.ExecutionModeConnection
 			return getDocker(config, logger)
