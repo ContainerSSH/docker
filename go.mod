@@ -6,8 +6,8 @@ require (
 	github.com/Microsoft/go-winio v0.5.0 // indirect
 	github.com/containerd/containerd v1.5.2 // indirect
 	github.com/containerssh/geoip v1.0.0
-	github.com/containerssh/log v1.1.6
 	github.com/containerssh/http v1.1.0 // indirect
+	github.com/containerssh/log v1.1.6
 	github.com/containerssh/metrics v1.0.0
 	github.com/containerssh/sshserver v1.0.0
 	github.com/containerssh/structutils v1.0.0
