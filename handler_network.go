@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/containerssh/log"
-	"github.com/containerssh/sshserver"
+	"github.com/containerssh/sshserver/v2"
 )
 
 type networkHandler struct {
@@ -28,17 +28,17 @@ type networkHandler struct {
 	done                chan struct{}
 }
 
-func (n *networkHandler) OnAuthPassword(_ string, _ []byte) (response sshserver.AuthResponse, reason error) {
-	return sshserver.AuthResponseUnavailable, fmt.Errorf("docker does not support authentication")
+func (n *networkHandler) OnAuthPassword(_ string, _ []byte, _ string) (sshserver.AuthResponse, map[string]string, error) {
+	return sshserver.AuthResponseUnavailable, nil, fmt.Errorf("docker does not support authentication")
 }
 
-func (n *networkHandler) OnAuthPubKey(_ string, _ string) (response sshserver.AuthResponse, reason error) {
-	return sshserver.AuthResponseUnavailable, fmt.Errorf("docker does not support authentication")
+func (n *networkHandler) OnAuthPubKey(_ string, _ string, _ string) (sshserver.AuthResponse, map[string]string, error) {
+	return sshserver.AuthResponseUnavailable, nil, fmt.Errorf("docker does not support authentication")
 }
 
 func (n *networkHandler) OnHandshakeFailed(_ error) {}
 
-func (n *networkHandler) OnHandshakeSuccess(username string) (
+func (n *networkHandler) OnHandshakeSuccess(username string, _ string, metadata map[string]string) (
 	connection sshserver.SSHConnectionHandler,
 	failureReason error,
 ) {
@@ -49,6 +49,11 @@ func (n *networkHandler) OnHandshakeSuccess(username string) (
 		n.config.Timeouts.ContainerStart)
 	defer cancelFunc()
 	n.username = username
+	var env map[string]string
+	if n.config.Execution.ExposeAuthMetadataAsEnv {
+		env = metadata
+	}
+
 
 	if err := n.setupDockerClient(ctx, n.config); err != nil {
 		return nil, err
@@ -64,7 +69,7 @@ func (n *networkHandler) OnHandshakeSuccess(username string) (
 	var cnt dockerContainer
 	var err error
 	if n.config.Execution.Mode == ExecutionModeConnection {
-		if cnt, err = n.dockerClient.createContainer(ctx, labels, nil, nil, nil); err != nil {
+		if cnt, err = n.dockerClient.createContainer(ctx, labels, env, nil, nil); err != nil {
 			return nil, err
 		}
 		n.container = cnt
@@ -76,6 +81,7 @@ func (n *networkHandler) OnHandshakeSuccess(username string) (
 	return &sshConnectionHandler{
 		networkHandler: n,
 		username:       username,
+		env: env,
 	}, nil
 }
 

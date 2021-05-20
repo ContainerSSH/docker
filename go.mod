@@ -1,4 +1,4 @@
-module github.com/containerssh/docker
+module github.com/containerssh/docker/v3
 
 go 1.14
 
@@ -8,7 +8,7 @@ require (
 	github.com/containerssh/geoip v1.0.0
 	github.com/containerssh/log v1.0.0
 	github.com/containerssh/metrics v1.0.0
-	github.com/containerssh/sshserver v1.0.0
+	github.com/containerssh/sshserver/v2 v2.0.0
 	github.com/containerssh/structutils v1.0.0
 	github.com/containerssh/unixutils v1.0.0
 	github.com/docker/distribution v2.7.1+incompatible
@@ -59,3 +59,5 @@ replace (
 	gopkg.in/yaml.v2 v2.2.6 => gopkg.in/yaml.v2 v2.2.8
 	gopkg.in/yaml.v2 v2.2.7 => gopkg.in/yaml.v2 v2.2.8
 )
+
+replace github.com/containerssh/sshserver/v2 v2.0.0 => ../sshserver

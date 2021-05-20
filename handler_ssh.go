@@ -1,7 +1,7 @@
 package docker
 
 import (
-	"github.com/containerssh/sshserver"
+	"github.com/containerssh/sshserver/v2"
 )
 
 type sshConnectionHandler struct {
@@ -9,6 +9,7 @@ type sshConnectionHandler struct {
 
 	networkHandler *networkHandler
 	username       string
+	env            map[string]string
 }
 
 func (s *sshConnectionHandler) OnUnsupportedGlobalRequest(_ uint64, _ string, _ []byte) {}

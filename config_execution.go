@@ -58,6 +58,11 @@ type ExecutionConfig struct {
 	// ImagePullPolicy controls when to pull container images.
 	ImagePullPolicy ImagePullPolicy `json:"imagePullPolicy" yaml:"imagePullPolicy" comment:"Image pull policy" default:"IfNotPresent"`
 
+	// ExposeAuthMetadataAsEnv lets you expose the authentication metadata (e.g. GITHUB_TOKEN) as an environment variable
+	// in the container. In contrast to the environment variables set in the SSH connection these environment variables
+	// are available to all processes in the container, including the idle command.
+	ExposeAuthMetadataAsEnv bool `json:"exposeAuthMetadataAsEnv" yaml:"exposeAuthMetadataAsEnv"`
+
 	// disableCommand is a configuration option to support legacy command disabling from the dockerrun config.
 	// See https://containerssh.io/deprecations/dockerrun for details.
 	disableCommand bool `json:"-" yaml:"-"`

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/containerssh/log"
-	"github.com/containerssh/sshserver"
+	"github.com/containerssh/sshserver/v2"
 	"github.com/containerssh/unixutils"
 )
 

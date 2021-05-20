@@ -5,7 +5,7 @@ import (
 
 	"github.com/containerssh/log"
 	"github.com/containerssh/metrics"
-	"github.com/containerssh/sshserver"
+	"github.com/containerssh/sshserver/v2"
 )
 
 // NewDockerRun creates a new NetworkConnectionHandler based on the deprecated "dockerrun" config structure.
