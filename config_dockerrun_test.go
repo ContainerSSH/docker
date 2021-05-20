@@ -26,6 +26,7 @@ func TestUnmarshalYAML03(t *testing.T) {
 	assert.NoError(t, unmarshaller.Decode(&config))
 	assert.Equal(t, false, config.Config.DisableCommand)
 	assert.Equal(t, "/usr/lib/openssh/sftp-server", config.Config.Subsystems["sftp"])
+	assert.Equal(t, "containerssh/containerssh-guest-image", config.Config.LaunchConfig.ContainerConfig.Image)
 	assert.Equal(t, 60*time.Second, config.Config.Timeout)
 }
 
@@ -43,5 +44,6 @@ func TestUnmarshalJSON03(t *testing.T) {
 	assert.NoError(t, unmarshaller.Decode(&config))
 	assert.Equal(t, false, config.Config.DisableCommand)
 	assert.Equal(t, "/usr/lib/openssh/sftp-server", config.Config.Subsystems["sftp"])
+	assert.Equal(t, "containerssh/containerssh-guest-image", config.Config.LaunchConfig.ContainerConfig.Image)
 	assert.Equal(t, 60*time.Second, config.Config.Timeout)
 }

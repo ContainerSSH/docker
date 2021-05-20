@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.0: Ignored inline option
+
+This release fixes an issue with the launch config where it would not be inlined properly. This is a backwards-incompatible change as the JSON structure changes.
+
 ## 1.0.0: First stable release
 
 This release tags the first stable version for ContainerSSH 0.4.0.

@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"encoding/json"
 	"fmt"
 )
 
@@ -32,7 +33,7 @@ func (e ExecutionMode) Validate() error {
 //goland:noinspection GoVetStructTag
 type ExecutionConfig struct {
 	// Launch contains the Docker-specific launch configuration.
-	Launch LaunchConfig `json:",inline" yaml:",inline"`
+	Launch LaunchConfig `json:",inline,omitempty" yaml:",inline"`
 	// Mode influences how commands are executed.
 	//
 	// - If ExecutionModeConnection is chosen (default) a new container is launched per connection. In this mode
@@ -42,16 +43,16 @@ type ExecutionConfig struct {
 	//   containers per connection. In this mode the program is launched directly as the main process of the container.
 	//   When configuring this mode you should explicitly configure the "cmd" option to an empty list if you want the
 	//   default command in the container to launch.
-	Mode ExecutionMode `json:"mode" yaml:"mode" default:"connection"`
+	Mode ExecutionMode `json:"mode,omitempty" yaml:"mode" default:"connection"`
 
 	// IdleCommand is the command that runs as the first process in the container in ExecutionModeConnection. Ignored in ExecutionModeSession.
-	IdleCommand []string `json:"idleCommand" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
+	IdleCommand []string `json:"idleCommand,omitempty" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
 	// ShellCommand is the command used for launching shells when the container is in ExecutionModeConnection. Ignored in ExecutionModeSession.
-	ShellCommand []string `json:"shellCommand" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
+	ShellCommand []string `json:"shellCommand,omitempty" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
 	// AgentPath contains the path to the ContainerSSH Guest Agent.
-	AgentPath string `json:"agentPath" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
+	AgentPath string `json:"agentPath,omitempty" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
 	// DisableAgent enables using the ContainerSSH Guest Agent.
-	DisableAgent bool `json:"disableAgent" yaml:"disableAgent"`
+	DisableAgent bool `json:"disableAgent,omitempty" yaml:"disableAgent"`
 	// Subsystems contains a map of subsystem names and their corresponding binaries in the container.
 	Subsystems map[string]string `json:"subsystems" yaml:"subsystems" comment:"Subsystem names and binaries map." default:"{\"sftp\":\"/usr/lib/openssh/sftp-server\"}"`
 
@@ -61,6 +62,68 @@ type ExecutionConfig struct {
 	// disableCommand is a configuration option to support legacy command disabling from the dockerrun config.
 	// See https://containerssh.io/deprecations/dockerrun for details.
 	disableCommand bool `json:"-" yaml:"-"`
+}
+
+type tmpExecutionConfig struct {
+	Mode ExecutionMode `json:"mode,omitempty" yaml:"mode" default:"connection"`
+	IdleCommand []string `json:"idleCommand,omitempty" yaml:"idleCommand" comment:"Run this command to wait for container exit" default:"[\"/usr/bin/containerssh-agent\", \"wait-signal\", \"--signal\", \"INT\", \"--signal\", \"TERM\"]"`
+	ShellCommand []string `json:"shellCommand,omitempty" yaml:"shellCommand" comment:"Run this command as a default shell." default:"[\"/bin/bash\"]"`
+	AgentPath string `json:"agentPath,omitempty" yaml:"agentPath" default:"/usr/bin/containerssh-agent"`
+	DisableAgent bool `json:"disableAgent,omitempty" yaml:"disableAgent"`
+	Subsystems map[string]string `json:"subsystems" yaml:"subsystems" comment:"Subsystem names and binaries map." default:"{\"sftp\":\"/usr/lib/openssh/sftp-server\"}"`
+	ImagePullPolicy ImagePullPolicy `json:"imagePullPolicy" yaml:"imagePullPolicy" comment:"Image pull policy" default:"IfNotPresent"`
+}
+
+// UnmarshalJSON provides inlining capabilities for LaunchConfig
+func (c *ExecutionConfig) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, &c.Launch); err != nil {
+		return fmt.Errorf("failed to decode launch config (%w)", err)
+	}
+
+	cfg := tmpExecutionConfig{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	c.Mode = cfg.Mode
+	c.IdleCommand = cfg.IdleCommand
+	c.ShellCommand = cfg.ShellCommand
+	c.AgentPath = cfg.AgentPath
+	c.DisableAgent = cfg.DisableAgent
+	c.Subsystems = cfg.Subsystems
+	c.ImagePullPolicy = cfg.ImagePullPolicy
+	return nil
+}
+
+func (c ExecutionConfig) MarshalJSON() ([]byte, error) {
+	launchData, err := json.Marshal(c.Launch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal launch config (%w)", err)
+	}
+	unmarshalledLaunchData := map[string]interface{}{}
+	if err := json.Unmarshal(launchData, &unmarshalledLaunchData); err != nil {
+		return nil, err
+	}
+	cfg := tmpExecutionConfig{
+		Mode:            c.Mode,
+		IdleCommand:     c.IdleCommand,
+		ShellCommand:    c.ShellCommand,
+		AgentPath:       c.AgentPath,
+		DisableAgent:    c.DisableAgent,
+		Subsystems:      c.Subsystems,
+		ImagePullPolicy: c.ImagePullPolicy,
+	}
+	cfgData, err := json.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	unmarshalledCfgData := map[string]interface{}{}
+	if err := json.Unmarshal(cfgData, &unmarshalledCfgData); err != nil {
+		return nil, err
+	}
+	for k,v := range unmarshalledLaunchData {
+		unmarshalledCfgData[k] = v
+	}
+	return json.Marshal(unmarshalledCfgData)
 }
 
 // Validate validates the docker config structure.

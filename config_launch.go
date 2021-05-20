@@ -14,30 +14,30 @@ import (
 // LaunchConfig contains the container configuration for the Docker client version 20.
 type LaunchConfig struct {
 	// ContainerConfig contains container-specific configuration options.
-	ContainerConfig *container.Config `json:"container" yaml:"container" comment:"Config configuration." default:"{\"image\":\"containerssh/containerssh-guest-image\"}"`
+	ContainerConfig *container.Config `json:"container,omitempty" yaml:"container" comment:"Config configuration." default:"{\"image\":\"containerssh/containerssh-guest-image\"}"`
 	// HostConfig contains the host-specific configuration options.
-	HostConfig *container.HostConfig `json:"host" yaml:"host" comment:"Host configuration"`
+	HostConfig *container.HostConfig `json:"host,omitempty" yaml:"host" comment:"Host configuration"`
 	// NetworkConfig contains the network settings.
-	NetworkConfig *network.NetworkingConfig `json:"network" yaml:"network" comment:"Network configuration"`
+	NetworkConfig *network.NetworkingConfig `json:"network,omitempty" yaml:"network" comment:"Network configuration"`
 	// Platform contains the platform specification.
-	Platform *specs.Platform `json:"platform" yaml:"platform" comment:"Platform specification"`
+	Platform *specs.Platform `json:"platform,omitempty" yaml:"platform" comment:"Platform specification"`
 	// ContainerName is the name of the container to launch. It is recommended to leave this empty, otherwise
 	// ContainerSSH may not be able to start the container if a container with the same name already exists.
-	ContainerName string `json:"containername" yaml:"containername" comment:"Name for the container to be launched"`
+	ContainerName string `json:"containername,omitempty" yaml:"containername" comment:"Name for the container to be launched"`
 }
 
 type tmpLaunchConfig struct {
 	// ContainerConfig contains container-specific configuration options.
-	ContainerConfig *container.Config `json:"container" yaml:"container"`
+	ContainerConfig *container.Config `json:"container,omitempty" yaml:"container"`
 	// HostConfig contains the host-specific configuration options.
-	HostConfig *container.HostConfig `json:"host" yaml:"host"`
+	HostConfig *container.HostConfig `json:"host,omitempty" yaml:"host"`
 	// NetworkConfig contains the network settings.
-	NetworkConfig *network.NetworkingConfig `json:"network" yaml:"network"`
+	NetworkConfig *network.NetworkingConfig `json:"network,omitempty" yaml:"network"`
 	// Platform contains the platform specification.
-	Platform *specs.Platform `json:"platform" yaml:"platform"`
+	Platform *specs.Platform `json:"platform,omitempty" yaml:"platform"`
 	// ContainerName is the name of the container to launch. It is recommended to leave this empty, otherwise
 	// ContainerSSH may not be able to start the container if a container with the same name already exists.
-	ContainerName string `json:"containername" yaml:"containername"`
+	ContainerName string `json:"containername,omitempty" yaml:"containername"`
 }
 
 // UnmarshalJSON implements the special unmarshalling of the LaunchConfig that ignores unknown fields.
