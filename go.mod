@@ -1,4 +1,4 @@
-module github.com/containerssh/docker
+module github.com/containerssh/docker/v2
 
 go 1.16
 
