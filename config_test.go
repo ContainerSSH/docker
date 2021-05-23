@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 
-	"github.com/containerssh/docker"
+	"github.com/containerssh/docker/v2"
 )
 
 // TestYAMLSerialization tests if the configuration structure can be serialized and then deserialized to/from YAML.

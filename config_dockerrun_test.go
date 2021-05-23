@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 
-	"github.com/containerssh/docker"
+	"github.com/containerssh/docker/v2"
 )
 
 // TestUnmarshalYAML03 tests the ContainerSSH 0.3 compatibility. It checks if a YAML fragment from 0.3 can still be

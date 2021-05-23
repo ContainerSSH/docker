@@ -12,7 +12,7 @@ import (
 	"github.com/containerssh/structutils"
 	"gopkg.in/yaml.v3"
 
-	"github.com/containerssh/docker"
+	"github.com/containerssh/docker/v2"
 )
 
 func TestConformance(t *testing.T) {
