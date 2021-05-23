@@ -1,18 +1,19 @@
 module github.com/containerssh/docker
 
-go 1.14
+go 1.16
 
 require (
-	github.com/Microsoft/go-winio v0.4.16 // indirect
-	github.com/containerd/containerd v1.4.4 // indirect
+	github.com/Microsoft/go-winio v0.5.0 // indirect
+	github.com/containerd/containerd v1.5.2 // indirect
 	github.com/containerssh/geoip v1.0.0
+	github.com/containerssh/http v1.1.0 // indirect
 	github.com/containerssh/log v1.1.6
 	github.com/containerssh/metrics v1.0.0
 	github.com/containerssh/sshserver v1.0.0
 	github.com/containerssh/structutils v1.0.0
 	github.com/containerssh/unixutils v1.0.0
 	github.com/docker/distribution v2.7.1+incompatible
-	github.com/docker/docker v20.10.5+incompatible
+	github.com/docker/docker v20.10.6+incompatible
 	github.com/docker/go-connections v0.4.0 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
@@ -25,10 +26,11 @@ require (
 	github.com/opencontainers/image-spec v1.0.1
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83 // indirect
-	golang.org/x/net v0.0.0-20210331212208-0fccb6fa2b5c // indirect
+	golang.org/x/net v0.0.0-20210510120150-4163338589ed // indirect
+	golang.org/x/sys v0.0.0-20210514084401-e8d321eab015 // indirect
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
-	google.golang.org/genproto v0.0.0-20210401141331-865547bb08e2 // indirect
+	google.golang.org/genproto v0.0.0-20210518161634-ec7691c0a37d // indirect
+	google.golang.org/grpc v1.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
 	gotest.tools/v3 v3.0.3 // indirect
 )
